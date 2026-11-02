@@ -1,0 +1,10 @@
+{
+  "name": "pslab",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["server", "plugin"],
+  "scripts": {
+    "test": "npm test --workspaces",
+    "build": "npm run build -w server"
+  }
+}

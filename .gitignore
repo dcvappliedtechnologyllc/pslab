@@ -1,0 +1,13 @@
+node_modules/
+server/dist/
+.DS_Store
+*.log
+.superpowers/
+.env
+.env.*
+*.pem
+*.key
+.vscode/
+.idea/
+*.zip
+._*

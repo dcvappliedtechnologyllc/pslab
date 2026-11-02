@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <style>
+      body { padding: 8px; color: var(--uxp-host-text-color); font-size: var(--uxp-host-font-size); }
+      .row { display: flex; align-items: center; margin-bottom: 8px; }
+      .row > * { margin-right: 6px; }
+      #status { font-weight: bold; }
+      #error { color: #e06c5c; word-break: break-word; }
+      #port { width: 70px; }
+    </style>
+  </head>
+  <body>
+    <div class="row"><span id="status">Disconnected</span></div>
+    <div class="row">
+      <label for="port">Port</label>
+      <input id="port" type="number" value="9777" />
+      <button id="toggle">Connect</button>
+    </div>
+    <div class="row">
+      <input id="autoconnect" type="checkbox" />
+      <label for="autoconnect">Connect on launch</label>
+    </div>
+    <div class="row"><span id="error"></span></div>
+    <script src="main.js"></script>
+  </body>
+</html>
