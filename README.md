@@ -78,22 +78,42 @@ Note: a Light adjustment layer reports kind `light` (pslab reads Photoshop's bri
 | `match_tone` | Match a pasted layer's tone to a reference region with clipped Hue/Sat and Curves |
 | `blur_layer` | Gaussian blur as a smart filter |
 
+### Geometry and cleanup
+
+| Tool | Purpose |
+| --- | --- |
+| `straighten` | Rotate a "Straightened" smart-object copy of the Background by `angle_deg` (positive = clockwise) or by the tilt `auto` measures from straight edges; the Background is untouched. Refuses (ALREADY_STRAIGHTENED) when a "Straightened" layer exists: `delete_layer` it (confirm) or hide it first. Patch layers above it are not rotated, so straighten first, then clean up |
+| `content_aware_fill` | Remove something with Content-Aware Fill into a box or polygon; the patch lands on a new named layer |
+| `clone_from` | Copy a box of the image to a new named layer at another spot, optionally with a feathered edge |
+
 ### Output
 
 | Tool | Purpose |
 | --- | --- |
-| `crop` | Crop the document to a ratio (e.g. `4:5`) or a box; needs `confirm: true` |
-| `export` | Write an sRGB JPEG (default long edge 1350 px) to the export root; needs `confirm: true` |
+| `crop` | Crop the document to a ratio (e.g. `4:5`, optionally centred on a `focus` point) or a box; needs `confirm: true` |
+| `export` | Write an sRGB JPEG (default long edge 1350 px) to the export root; `preset: "post"` (4:5, 1080x1350) or `"story"` (9:16, 1080x1920) crops only the temporary copy, optionally around a `focus` point; needs `confirm: true` |
 | `save` | Save the document as PSD or JPG; needs `confirm: true` |
+| `save_psd` | Write a layered PSD copy next to the exports (`<root>`, `<root>/<shoot>` or an absolute `folder`), named after the document; never overwrites; needs `confirm: true` |
+
+### Shoot workflow
+
+| Tool | Purpose |
+| --- | --- |
+| `copy_layers_to` | Copy an adjustment stack (with masks) onto the top of another document, keeping its order; one undo step in the destination, the source is unchanged |
+| `open_folder` | Open every image in a folder (optional `*`/`?` pattern, at most 50) in file-name order |
+| `compare_preview` | One side-by-side JPEG: before (listed layers hidden) on the left, after on the right; leaves no history |
+| `contact_sheet` | One JPEG tiling the composites of up to 24 open documents in a grid |
 
 Developer tool: `dev_events` returns recorded Photoshop events for discovering batchPlay descriptors.
 
 ## Safety
 
-- `crop`, `export`, `save` and `delete_layer` do nothing unless called with `confirm: true`.
-- Every tool call is one undo step in Photoshop.
+- `crop`, `export`, `save`, `save_psd` and `delete_layer` do nothing unless called with `confirm: true`.
+- Every editing call is one undo step in Photoshop (read-only tools and the file writers export, save and save_psd add none).
 - `delete_layer` refuses the Background layer (`PROTECTED_LAYER`). There is no flatten or close-document tool.
-- `export` works on a temporary copy; the open document is untouched. It overwrites a file with the same name.
+- `export` works on a temporary copy; the open document is untouched, even with a `preset` (the ratio crop happens on the copy, unlike `crop`). It overwrites a file with the same name.
+- `save_psd` never overwrites a file: it adds `-edit` when the target would be the document's own file and `-2`, `-3` ... when the name is taken. It saves a copy, so the open document keeps its own file (unlike `save` with `format: psd`, which rebinds the document to the new file).
+- `straighten`, `content_aware_fill` and `clone_from` put their result on a new layer; the Background is never edited.
 - Exports go to `~/Documents/pslab-exports/<shoot>/<filename>`, where `<shoot>` is the name of the source file's folder, used as the export subfolder. Set `PSLAB_EXPORT_ROOT` to change the root.
 
 ## Troubleshooting

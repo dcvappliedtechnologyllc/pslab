@@ -132,6 +132,28 @@ test("transform", () => {
   assert.deepStrictEqual(t.offset, { _obj: "offset", horizontal: px(0), vertical: px(0) });
 });
 
+test("transform with angleDeg rotates; default angle stays 0", () => {
+  const t = d.transform({ scalePct: 100, angleDeg: -2.5 });
+  assert.deepStrictEqual(t.angle, { _unit: "angleUnit", _value: -2.5 });
+  assert.deepStrictEqual(t.width, { _unit: "percentUnit", _value: 100 });
+  assert.deepStrictEqual(t.height, { _unit: "percentUnit", _value: 100 });
+  assert.deepStrictEqual(d.transform({ scalePct: 80 }).angle, { _unit: "angleUnit", _value: 0 });
+});
+
+test("geometry and cleanup descriptors", () => {
+  assert.deepStrictEqual(d.stampVisible(), { _obj: "mergeVisible", duplicate: true });
+  assert.deepStrictEqual(d.contentAwareFill(), {
+    _obj: "fill", using: { _enum: "fillContents", _value: "contentAware" },
+    contentAwareColorAdaptationFill: true, contentAwareRotationFill: false,
+    contentAwareScaleFill: false, contentAwareMirrorFill: false,
+    opacity: { _unit: "percentUnit", _value: 100 }, mode: { _enum: "blendMode", _value: "normal" } });
+  assert.deepStrictEqual(d.expand(2), { _obj: "expand", by: px(2), selectionModifyEffectAtCanvasBounds: false });
+  assert.deepStrictEqual(d.inverseSelection(), { _obj: "inverse" });
+  assert.deepStrictEqual(d.clearSelected(), { _obj: "delete" });
+  assert.deepStrictEqual(d.deselect(), {
+    _obj: "set", _target: [{ _ref: "channel", _property: "selection" }], to: { _enum: "ordinal", _value: "none" } });
+});
+
 test("profile, save, smart object, filters", () => {
   assert.deepStrictEqual(d.convertToSRGB(), {
     _obj: "convertToProfile", _target: [{ _ref: "document", _enum: "ordinal", _value: "targetEnum" }],
@@ -170,6 +192,14 @@ test("recorded map lists every type and is null for a module that is not there",
     const exists = fs.existsSync(path.join(__dirname, "../lib/recorded", `${type}.js`));
     if (!exists) assert.equal(value, null, type);
   }
+});
+
+test("moveLayerToFront targets the layer by id and moves it to the front", () => {
+  assert.deepStrictEqual(d.moveLayerToFront(7), {
+    _obj: "move",
+    _target: [{ _ref: "layer", _id: 7 }],
+    to: { _ref: "layer", _enum: "ordinal", _value: "front" },
+  });
 });
 
 test("setAdjustment: set on the targeted adjustment layer with the make payloads", () => {

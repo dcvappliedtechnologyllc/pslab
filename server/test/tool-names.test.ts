@@ -9,6 +9,8 @@ import { registerDevTools } from "../src/tools/dev.js";
 import { registerEditTools } from "../src/tools/edit.js";
 import { registerCompositeTools } from "../src/tools/composite.js";
 import { registerOutputTools } from "../src/tools/output.js";
+import { registerGeometryTools } from "../src/tools/geometry.js";
+import { registerWorkflowTools } from "../src/tools/workflow.js";
 import { registerMaskTools } from "../src/tools/masks.js";
 
 const require = createRequire(import.meta.url);
@@ -23,6 +25,8 @@ describe("tool names", () => {
     registerEditTools(server, bridge);
     registerCompositeTools(server, bridge);
     registerOutputTools(server, bridge);
+    registerGeometryTools(server, bridge);
+    registerWorkflowTools(server, bridge);
     registerMaskTools(server, bridge);
     const [a, b] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "t", version: "0" });
@@ -62,6 +66,8 @@ describe("tool schemas", () => {
     registerEditTools(server, bridge);
     registerCompositeTools(server, bridge);
     registerOutputTools(server, bridge);
+    registerGeometryTools(server, bridge);
+    registerWorkflowTools(server, bridge);
     registerMaskTools(server, bridge);
     const [a, b] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "t", version: "0" });

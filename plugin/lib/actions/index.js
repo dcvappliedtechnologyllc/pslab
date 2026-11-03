@@ -5,6 +5,8 @@ const dev = require("./dev");
 const edit = require("./edit");
 const composite = require("./composite");
 const output = require("./output");
+const geometry = require("./geometry");
+const workflow = require("./workflow");
 const masks = require("./masks");
 
 module.exports = {
@@ -34,4 +36,12 @@ module.exports = {
   crop: output.crop,
   export: output.export,
   save: output.save,
+  straighten: geometry.straighten,
+  content_aware_fill: geometry.content_aware_fill,
+  clone_from: geometry.clone_from,
+  save_psd: output.save_psd,
+  copy_layers_to: workflow.copy_layers_to,
+  open_folder: workflow.open_folder,
+  compare_preview: workflow.compare_preview,
+  contact_sheet: workflow.contact_sheet,
 };

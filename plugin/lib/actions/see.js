@@ -81,6 +81,14 @@ function invalidArgs(message) {
   return e;
 }
 
+// Open one file entry as a new document and return the new (now active)
+// document's {id, name}. Call inside a modal scope: app.open requires one.
+async function openEntry(ps, entry) {
+  await ps.app.open(entry);
+  const d = ps.app.activeDocument;
+  return { id: d.id, name: String(d.name ?? d.title ?? "") };
+}
+
 // Open a file from disk as a new document and return its summary. Runs in a
 // modal scope (app.open requires one) but creates no history state of ours.
 async function open_document(ps, args = {}) {
@@ -94,9 +102,7 @@ async function open_document(ps, args = {}) {
     err.code = "FILE_NOT_FOUND";
     throw err;
   }
-  await runRead(ps, "Open document", async () => {
-    await ps.app.open(entry);
-  });
+  await runRead(ps, "Open document", () => openEntry(ps, entry));
   const { d, docs } = resolveDoc(ps);
   return {
     ...(await docSummary(ps, d)),
@@ -104,4 +110,4 @@ async function open_document(ps, args = {}) {
   };
 }
 
-module.exports = { get_document, open_document, render_preview, region_stats, readPixels };
+module.exports = { get_document, open_document, render_preview, region_stats, openEntry, readPixels };

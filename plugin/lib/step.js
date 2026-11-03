@@ -86,6 +86,32 @@ function runSteps(ps, steps, fn) {
   });
 }
 
+// A scratch step: the suspension is ALWAYS rolled back (resumeHistory false),
+// so whatever fn changes (e.g. hiding layers to read a "before" composite)
+// leaves no history state and no net change. fn's value is still returned.
+function runScratch(ps, name, docId, fn) {
+  return modal(ps, name, async (ctx) => {
+    const host = ctx.hostControl;
+    let id;
+    let result;
+    try {
+      id = await host.suspendHistory({ documentID: docId, name });
+      result = { __value: await fn(ctx) };
+    } catch (e) {
+      result = toErrorValue(e);
+    }
+    if (id !== undefined) {
+      try {
+        await host.resumeHistory(id, false);
+      } catch (e) {
+        // fn's error wins; on success a failed rollback is the error
+        if (!result.__error) result = toErrorValue(e);
+      }
+    }
+    return result;
+  });
+}
+
 function runRead(ps, name, fn) {
   return modal(ps, name, async (ctx) => {
     try {
@@ -109,4 +135,4 @@ async function bp(ps, descriptors) {
   return results;
 }
 
-module.exports = { runStep, runSteps, runRead, bp };
+module.exports = { runStep, runSteps, runScratch, runRead, bp };
