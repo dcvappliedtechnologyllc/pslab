@@ -370,7 +370,7 @@ Not run live: the P2–P4 tools themselves (the loaded plugin predates this bran
 
 Plugin reloaded from this branch's `plugin/` (copied over the checkout the UXP Developer
 Tool loads), server via `scripts/dev-harness.mjs`. Docs: IMG_0040.JPG (133) and IMG_0041.JPG
-(137) from "Office & Spa Stills", opened with `open_folder`.
+(137) from the test shoot folder, opened with `open_folder`.
 
 - `open_folder pattern:"IMG_0040.JPG"` / `"img_0041.jpg"` (case-insensitive) → one doc each
   with id, name and path. A `[01]` character class matches nothing: only `*` and `?`.
