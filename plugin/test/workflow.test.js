@@ -23,6 +23,12 @@ function makeCopyStub({ dupThrows = false } = {}) {
       name,
       kind,
       ...extra,
+      async bringToFront() {
+        calls.push(["bringToFront", this.id]);
+        const i = doc.layers.findIndex((l) => l.id === this.id);
+        const [l] = doc.layers.splice(i, 1);
+        doc.layers.unshift(l);
+      },
       async duplicate(target) {
         calls.push(["duplicate", this.id, target.id]);
         if (dupThrows) throw new Error("duplicate failed");
@@ -74,11 +80,6 @@ function makeCopyStub({ dupThrows = false } = {}) {
       async batchPlay(descs) {
         calls.push(["batchPlay", descs]);
         for (const desc of descs) {
-          if (desc._obj === "move") {
-            const i = active.layers.findIndex((l) => l.id === desc._target[0]._id);
-            const [l] = active.layers.splice(i, 1);
-            active.layers.unshift(l);
-          }
         }
         return descs.map(() => ({}));
       },
@@ -102,19 +103,12 @@ test("copy_layers_to: one state in dst only, stack order kept, ids in args order
     ["duplicate", 11, 2],
     ["duplicate", 12, 2],
   ]);
-  const moves = ps.calls.filter((c) => c[0] === "batchPlay" && c[1].some((d) => d._obj === "move"));
-  assert.deepEqual(moves[0][1], [
-    { _obj: "select", _target: [{ _ref: "layer", _id: 100 }], makeVisible: false, _options: { dialogOptions: "dontDisplay" } },
-    { _obj: "move", _target: [{ _ref: "layer", _id: 100 }], to: { _ref: "layer", _enum: "ordinal", _value: "front" }, _options: { dialogOptions: "dontDisplay" } },
-  ]);
-  // dst is activated once; src is never activated and nothing is selected in it
+  // the first copy already lands on top of the one-layer dst (no move); the
+  // second lands under it and is brought to the front through the DOM
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "bringToFront"), [["bringToFront", 101]]);
+  // dst is activated once; src is never activated and nothing is selected anywhere
   assert.deepEqual(ps.calls.filter((c) => c[0] === "activate"), [["activate", 2]]);
-  const selected = ps.calls
-    .filter((c) => c[0] === "batchPlay")
-    .flatMap((c) => c[1])
-    .filter((d) => d._obj === "select")
-    .map((d) => d._target[0]._id);
-  assert.deepEqual(selected, [100, 101]);
+  assert.equal(ps.calls.filter((c) => c[0] === "batchPlay").length, 0);
   assert.equal(ps.app.activeDocument.id, 2);
 });
 

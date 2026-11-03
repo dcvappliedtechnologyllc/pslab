@@ -256,13 +256,13 @@ function saveJpeg(token, quality) {
 }
 
 // Stamp Visible (Cmd+Opt+Shift+E): a new pixel layer above the active layer
-// holding the visible composite. [INFERRED] needs live recording with dev_events
+// holding the visible composite. verified live on PS 27.11 (2026-11-02): it ran inside content_aware_fill / clone_from with the expected result
 function stampVisible() {
   return { _obj: "mergeVisible", duplicate: true };
 }
 
 // Edit > Fill > Content-Aware into the active selection on the active layer.
-// [INFERRED] needs live recording with dev_events
+// verified live on PS 27.11 (2026-11-02): it ran inside content_aware_fill / clone_from with the expected result
 function contentAwareFill() {
   return {
     _obj: "fill",
@@ -276,18 +276,18 @@ function contentAwareFill() {
   };
 }
 
-// Select > Modify > Expand. [INFERRED] shape mirrors contract (uxp-api-notes section 5)
+// Select > Modify > Expand. shape mirrors contract (uxp-api-notes section 5); verified live on PS 27.11 (2026-11-02)
 function expand(pixels) {
   return { _obj: "expand", by: px(pixels), selectionModifyEffectAtCanvasBounds: false };
 }
 
-// Select > Inverse (the selection, not the pixels: see invert()). [INFERRED] needs live recording with dev_events
+// Select > Inverse (the selection, not the pixels: see invert()). verified live on PS 27.11 (2026-11-02): it ran inside content_aware_fill / clone_from with the expected result
 function inverseSelection() {
   return { _obj: "inverse" };
 }
 
 // Edit > Clear: erase the selected pixels of the active pixel layer.
-// [INFERRED] needs live recording with dev_events
+// verified live on PS 27.11 (2026-11-02): it ran inside content_aware_fill / clone_from with the expected result
 function clearSelected() {
   return { _obj: "delete" };
 }
@@ -314,14 +314,7 @@ function duplicateLayerTo(docId, name) {
   return d;
 }
 
-// Layer > Arrange > Bring to Front for one layer (top of its parent stack).
-// [INFERRED] needs live recording with dev_events
-function moveLayerToFront(id) {
-  return { _obj: "move", _target: [{ _ref: "layer", _id: id }], to: { _ref: "layer", _enum: "ordinal", _value: "front" } };
-}
-
 module.exports = {
-  moveLayerToFront,
   selectLayerById, makeAdjustment, setAdjustment, clipToBelow, makeMaskFromSelection, selectMaskChannel, selectRgbChannel,
   invert, setMaskFeather, selectRectangle, selectPolygon, objectSelect, selectSubject, contract, feather,
   fill, transform, convertToSRGB, saveJpeg, newPlacedLayer, gaussianBlur, defringe, duplicateLayerTo,

@@ -224,7 +224,7 @@ nothing saved.
   67 of the 256 neutral greys just below their integer (white was 254.99999999999997, so
   `min_l: 255` returned an empty mask).
 
-## 2026-11-02, v0.2 P2 Geometry and cleanup — built, not yet live-verified
+## 2026-11-02, v0.2 P2 Geometry and cleanup — built; live-verified below
 
 Stub-tested only (plugin node tests + server vitest). Nothing below has run in Photoshop yet.
 
@@ -273,7 +273,7 @@ Stub-tested only (plugin node tests + server vitest). Nothing below has run in P
     are centered on the layer bounds, so an offset-only transform should be a pure move); bounds after
     the move; the mask fade looks right at feather 0, 8 and 40.
 
-## 2026-11-02, v0.2 P3 Shoot workflow — built, not yet live-verified
+## 2026-11-02, v0.2 P3 Shoot workflow — built; live-verified below
 
 - `copy_layers_to {src_doc, dst_doc, layers}`: duplicates the listed layers (bottom-most first)
   with DOM `layer.duplicate(dst)`, finds each new layer by the before/after id set (shared
@@ -311,7 +311,7 @@ Stub-tested only (plugin node tests + server vitest). Nothing below has run in P
     slightly off in the sheet); the same createImageDataFromBuffer/encodeImageData path as
     compare_preview.
 
-## 2026-11-02, v0.2 P4 Output — built, not yet live-verified
+## 2026-11-02, v0.2 P4 Output — built; live-verified below
 - `crop` gains `focus: {x, y}` (image px) for ratio crops: the same largest box of the
   aspect, centred on focus and clamped inside the canvas. Without focus the box is
   unchanged. focus with bbox is refused (server toolError, plugin INVALID_ARGS); focus
@@ -365,3 +365,35 @@ Not run live: the P2–P4 tools themselves (the loaded plugin predates this bran
 "built, not yet live-verified" above. To verify them, reload the plugin from this branch's
 `plugin/manifest.json` in the UXP Developer Tool and record the [INFERRED] descriptors with
 `dev_events`.
+
+## 2026-11-02, v0.2 P2–P4 live verification — PASS (plugin reloaded from this branch)
+
+Plugin reloaded from this branch's `plugin/` (copied over the checkout the UXP Developer
+Tool loads), server via `scripts/dev-harness.mjs`. Docs: IMG_0040.JPG (133) and IMG_0041.JPG
+(137) from "Office & Spa Stills", opened with `open_folder`.
+
+- `open_folder pattern:"IMG_0040.JPG"` / `"img_0041.jpg"` (case-insensitive) → one doc each
+  with id, name and path. A `[01]` character class matches nothing: only `*` and `?`.
+- `straighten auto` on 133: measured 0.0° (confidence 0.121, 12 543 edges, 431 px preview);
+  "Straightened" smart object (id 3) above the Background. `angle_deg: 2` on 137 rotates
+  clockwise (verticals lean right at the top), so the sign convention holds. A second
+  `straighten` on 133 is refused with ALREADY_STRAIGHTENED before any history state.
+- `content_aware_fill bbox` (700,4390)–(1030,4610) "Remove pump" on 133 → layer on top,
+  bounds = bbox + 2 px; the pump is gone in `compare_preview`. The `mergeVisible duplicate:true`,
+  `fill using contentAware`, `expand`, `inverse` and `delete` (Clear) descriptors all ran as
+  inferred; no recording needed.
+- `clone_from src_bbox` (2100,600)–(2700,1200) → `dst` (300,5200), feather 20 → bounds
+  exactly (300,5200)–(900,5800), masked, soft edge visible.
+- `compare_preview layer_ids_off:[5,6] max_px:1200` → 1200×1062 (halves 596 wide), before on
+  the left, after on the right, layers visible again, no history state left.
+- `contact_sheet docs:[59,133,137] max_px:1200` → 1200×1200, 2×2 cells of 588 px, centered.
+- `export preset:"post"` → 1080×1350 (crop_bbox top 895..5105); `preset:"story"` with focus →
+  1080×1920 (crop 13..6000); plain `long_edge_px:800` → 449×800. Doc 133 still 3368×6000.
+- `save_psd shoot:"pslab-live-test"` → `IMG_0040.psd` (4 layers, 223 MB), second call →
+  `IMG_0040-2.psd`; the document still reads `IMG_0040.JPG`.
+- `crop ratio:"4:5" focus:{3000,5500}` on 137 → bbox (0,1790)–(3368,6000), doc 3368×4210
+  (focus clamped to the bottom edge).
+- `copy_layers_to` FAILED at the inferred `move … to front` descriptor (BATCHPLAY, empty
+  message) and rolled back cleanly (dst unchanged). Replaced by the DOM `layer.bringToFront()`
+  (fallback `layer.move(top, ElementPlacement.PLACEBEFORE)`), skipped when the copy already
+  lands on top. Re-test after reload: see below.

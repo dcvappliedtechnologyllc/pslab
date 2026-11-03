@@ -194,14 +194,6 @@ test("recorded map lists every type and is null for a module that is not there",
   }
 });
 
-test("moveLayerToFront targets the layer by id and moves it to the front", () => {
-  assert.deepStrictEqual(d.moveLayerToFront(7), {
-    _obj: "move",
-    _target: [{ _ref: "layer", _id: 7 }],
-    to: { _ref: "layer", _enum: "ordinal", _value: "front" },
-  });
-});
-
 test("setAdjustment: set on the targeted adjustment layer with the make payloads", () => {
   const adjTarget = [{ _ref: "adjustmentLayer", _enum: "ordinal", _value: "targetEnum" }];
   const ch = (v) => ({ _ref: "channel", _enum: "channel", _value: v });

@@ -42,6 +42,15 @@ function isBackground(layer) {
 
 // ---------- copy_layers_to ----------
 
+// Layer > Arrange > Bring to Front through the DOM. The batchPlay form
+// ({_obj:"move", _target:[{_ref:"layer",_id}], to:{_ref:"layer",_enum:"ordinal",_value:"front"}})
+// failed live on PS 27.11 with an empty message, so it is not used.
+async function bringToFront(ps, dst, layer) {
+  if (typeof layer.bringToFront === "function") return layer.bringToFront();
+  const top = Array.from(dst.layers || [])[0];
+  return layer.move(top, ps.constants.ElementPlacement.PLACEBEFORE);
+}
+
 async function copy_layers_to(ps, args = {}) {
   const ids = args.layers;
   if (!Array.isArray(ids) || ids.length === 0 || !ids.every(Number.isInteger)) {
@@ -77,7 +86,8 @@ async function copy_layers_to(ps, args = {}) {
         // (verified live in the P3 bring-up).
         const made = resolvePasted(dst, before, await layer.duplicate(dst));
         if (!made) throw codedError("COPY_FAILED", `The copy of layer ${layer.id} was not found in the destination`);
-        await bp(ps, [D.selectLayerById(made.id), D.moveLayerToFront(made.id)]);
+        const top = Array.from(dst.layers || [])[0];
+        if (!top || top.id !== made.id) await bringToFront(ps, dst, made);
         copied.set(layer.id, made);
       }
       // dst stays active so the next tool (and a look in Photoshop) lands there.
