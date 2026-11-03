@@ -49,7 +49,9 @@ async function fileEntry(ps, p) {
 
 // ---------- crop ----------
 
-function ratioBox(w, h, ratio) {
+// Largest box of the given aspect inside w x h. Centred on the canvas, or on
+// focus {x, y} (image px) and then shifted so it stays fully inside the canvas.
+function ratioBox(w, h, ratio, focus) {
   const m = /^(\d+):(\d+)$/.exec(String(ratio));
   const rw = m ? Number(m[1]) : 0;
   const rh = m ? Number(m[2]) : 0;
@@ -64,9 +66,27 @@ function ratioBox(w, h, ratio) {
     ch = Math.floor((w * rh) / rw);
   }
   if (cw < 1 || ch < 1) throw invalid(`ratio ${ratio} is too extreme for a ${w}x${h} document`);
-  const left = Math.floor((w - cw) / 2);
-  const top = Math.floor((h - ch) / 2);
+  let left;
+  let top;
+  if (focus) {
+    const clamp = (v, max) => Math.min(Math.max(v, 0), max);
+    left = clamp(Math.floor(focus.x - cw / 2), w - cw);
+    top = clamp(Math.floor(focus.y - ch / 2), h - ch);
+  } else {
+    left = Math.floor((w - cw) / 2);
+    top = Math.floor((h - ch) / 2);
+  }
   return { left, top, right: left + cw, bottom: top + ch };
+}
+
+// focus must be {x, y} finite numbers inside the canvas; undefined/null means none.
+function checkFocus(focus, w, h) {
+  if (focus === undefined || focus === null) return undefined;
+  const ok =
+    typeof focus === "object" && Number.isFinite(focus.x) && Number.isFinite(focus.y) &&
+    focus.x >= 0 && focus.y >= 0 && focus.x <= w && focus.y <= h;
+  if (!ok) throw invalid(`focus must be {x, y} inside the ${w}x${h} document, got ${JSON.stringify(focus)}`);
+  return { x: focus.x, y: focus.y };
 }
 
 function checkBox(b, w, h) {
@@ -80,11 +100,14 @@ function checkBox(b, w, h) {
 async function crop(ps, args = {}) {
   const hasRatio = args.ratio !== undefined && args.ratio !== null;
   const hasBox = args.bbox !== undefined && args.bbox !== null;
+  const hasFocus = args.focus !== undefined && args.focus !== null;
   if (hasRatio === hasBox) throw invalid("crop needs exactly one of ratio or bbox");
+  if (hasFocus && hasBox) throw invalid("focus only applies to a ratio crop, not to bbox");
   const { d } = resolveDoc(ps, args.doc);
   const w = Number(d.width);
   const h = Number(d.height);
-  const bbox = hasRatio ? ratioBox(w, h, args.ratio) : checkBox(args.bbox, w, h);
+  const focus = checkFocus(args.focus, w, h);
+  const bbox = hasRatio ? ratioBox(w, h, args.ratio, focus) : checkBox(args.bbox, w, h);
   return runStep(ps, `Claude: crop ${hasRatio ? args.ratio : "bbox"}`, d.id, async () => {
     await d.crop(bbox);
     return { bbox };
@@ -100,18 +123,39 @@ function fitLongEdge(w, h, longEdge) {
   return w >= h ? [longEdge, Math.max(1, Math.round(h * scale))] : [Math.max(1, Math.round(w * scale)), longEdge];
 }
 
+// Instagram presets: crop the temporary copy to the aspect, then size the long edge.
+const PRESETS = {
+  post: { ratio: "4:5", longEdge: 1350 }, // 1080x1350 portrait feed post
+  story: { ratio: "9:16", longEdge: 1920 }, // 1080x1920 story / reel cover
+};
+
 async function exportJpg(ps, args = {}) {
-  const { path, long_edge_px: longEdge, quality } = args;
+  const { path, quality, preset } = args;
+  const hasPreset = preset !== undefined && preset !== null;
+  const hasFocus = args.focus !== undefined && args.focus !== null;
   requireFilePath(path, [".jpg"]);
+  if (hasPreset && !Object.prototype.hasOwnProperty.call(PRESETS, preset)) {
+    throw invalid(`preset must be post or story, got ${preset}`);
+  }
+  if (hasFocus && !hasPreset) throw invalid("focus only applies with a preset");
+  // A preset sets the long edge itself; long_edge_px is ignored then.
+  const longEdge = hasPreset ? PRESETS[preset].longEdge : args.long_edge_px;
   if (!isInt(longEdge) || longEdge < 1) throw invalid(`long_edge_px must be a positive whole number, got ${longEdge}`);
   if (!isInt(quality) || quality < 1 || quality > 12) throw invalid(`quality must be a whole number 1..12, got ${quality}`);
   const { d } = resolveDoc(ps, args.doc);
+  let cropBox = null;
+  if (hasPreset) {
+    const w = Number(d.width);
+    const h = Number(d.height);
+    cropBox = ratioBox(w, h, PRESETS[preset].ratio, checkFocus(args.focus, w, h));
+  }
   return runRead(ps, `Claude: export ${splitPath(path).base}`, async () => {
     // duplicate() makes the copy active and closing it lets Photoshop pick the
     // next tab, so the active document is put back afterwards on every path.
     const original = ps.app.activeDocument;
     try {
-      return await exportCopy(ps, d, path, longEdge, quality);
+      const result = await exportCopy(ps, d, path, longEdge, quality, cropBox);
+      return hasPreset ? { ...result, preset, crop_bbox: cropBox } : result;
     } finally {
       restoreActive(ps, original);
     }
@@ -131,11 +175,16 @@ function layerCount(doc) {
 // modes are rendered in the document's own profile, not recomputed in sRGB.
 // duplicate(name, true) merges while copying; when that leaves more than one
 // layer, the copy (never the original) is flattened.
-async function exportCopy(ps, d, path, longEdge, quality) {
+// cropBox (a preset's ratio box, in original pixels: the copy has the same
+// size) is applied to the copy only, so a preset export is the non-destructive
+// route to a ratio export, unlike crop. Order: flatten, crop, convertProfile,
+// bits, resize, save.
+async function exportCopy(ps, d, path, longEdge, quality, cropBox = null) {
   const copy = await d.duplicate("pslab export", true);
   let result;
   try {
     if (layerCount(copy) !== 1) await copy.flatten();
+    if (cropBox) await copy.crop(cropBox);
     await copy.convertProfile("sRGB IEC61966-2.1", ps.constants.Intent.RELATIVECOLORIMETRIC);
     if (bitsOf(copy.bitsPerChannel) !== 8) {
       try {
@@ -204,4 +253,80 @@ async function save(ps, args = {}) {
   });
 }
 
-module.exports = { crop, export: exportJpg, save };
+// ---------- save_psd ----------
+
+const PSD_SOURCE_EXT = /\.(psd|jpe?g|heic|png|tiff?)$/i;
+
+// IMG_0118.JPG -> IMG_0118; a name without a known extension stays as it is.
+// Path separators in a document name would escape the folder, so they become "-".
+function psdStem(name) {
+  const stem = String(name || "").replace(PSD_SOURCE_EXT, "").replace(/[/:\\]/g, "-");
+  return stem && !stem.startsWith(".") ? stem : "untitled";
+}
+
+function requireFolder(folder) {
+  if (typeof folder !== "string" || !folder.startsWith("/") || folder.split("/").includes("..")) {
+    throw invalid(`folder must be an absolute path without .., got ${folder}`);
+  }
+  return folder.length > 1 ? folder.replace(/\/+$/, "") : folder;
+}
+
+async function exists(fs, p) {
+  try {
+    await fs.getEntryWithUrl("file:" + p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// First free name in folder: <stem>.psd, else <stem>-2.psd ... <stem>-99.psd.
+// When the document itself is <folder>/<stem>.psd the stem becomes <stem>-edit,
+// so the source file is never the target.
+async function psdTarget(ps, d, folder) {
+  let stem = psdStem(d.name);
+  const join = (name) => (folder === "/" ? "/" : folder + "/") + name;
+  if (hasFile(d) && d.path.toLowerCase() === join(stem + ".psd").toLowerCase()) stem += "-edit";
+  for (let n = 1; n <= 99; n++) {
+    const name = n === 1 ? `${stem}.psd` : `${stem}-${n}.psd`;
+    const target = join(name);
+    const isSource = hasFile(d) && d.path.toLowerCase() === target.toLowerCase();
+    if (!isSource && !(await exists(ps.fs, target))) return { name, target };
+  }
+  throw codedError("SAVE_EXISTS", `${join(stem + ".psd")} and -2 .. -99 all exist; choose another folder`);
+}
+
+// Writes a layered PSD copy into folder and never overwrites any file
+// (createFile overwrite: false, and the name is probed first). Unlike
+// save format:psd, which rebinds the open document to the new file, this
+// saves AS A COPY: the open document keeps referring to its own file.
+// No history state; nothing in the document changes.
+async function savePsd(ps, args = {}) {
+  const folder = requireFolder(args.folder);
+  const { d } = resolveDoc(ps, args.doc);
+  return runRead(ps, "Claude: save_psd", async () => {
+    const { name, target } = await psdTarget(ps, d, folder);
+    const parent = await ensureFolder(ps.fs, folder);
+    let file;
+    try {
+      file = await parent.createFile(name, { overwrite: false });
+    } catch (e) {
+      throw codedError("SAVE_EXISTS", `Could not create ${target} without overwriting: ${(e && e.message) || e}`);
+    }
+    try {
+      await d.saveAs.psd(file, { embedColorProfile: true, maximizeCompatibility: true }, true);
+    } catch (e) {
+      // createFile already made an empty file: remove it so a failed save
+      // leaves no 0-byte PSD behind.
+      try {
+        await file.delete();
+      } catch {
+        // the save error wins
+      }
+      throw codedError("SAVE_FAILED", `Could not save ${target}: ${(e && e.message) || e}`);
+    }
+    return { path: target, layers: layerCount(d) };
+  });
+}
+
+module.exports = { crop, export: exportJpg, save, save_psd: savePsd, ratioBox, psdStem };

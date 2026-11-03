@@ -132,6 +132,28 @@ test("transform", () => {
   assert.deepStrictEqual(t.offset, { _obj: "offset", horizontal: px(0), vertical: px(0) });
 });
 
+test("transform with angleDeg rotates; default angle stays 0", () => {
+  const t = d.transform({ scalePct: 100, angleDeg: -2.5 });
+  assert.deepStrictEqual(t.angle, { _unit: "angleUnit", _value: -2.5 });
+  assert.deepStrictEqual(t.width, { _unit: "percentUnit", _value: 100 });
+  assert.deepStrictEqual(t.height, { _unit: "percentUnit", _value: 100 });
+  assert.deepStrictEqual(d.transform({ scalePct: 80 }).angle, { _unit: "angleUnit", _value: 0 });
+});
+
+test("geometry and cleanup descriptors", () => {
+  assert.deepStrictEqual(d.stampVisible(), { _obj: "mergeVisible", duplicate: true });
+  assert.deepStrictEqual(d.contentAwareFill(), {
+    _obj: "fill", using: { _enum: "fillContents", _value: "contentAware" },
+    contentAwareColorAdaptationFill: true, contentAwareRotationFill: false,
+    contentAwareScaleFill: false, contentAwareMirrorFill: false,
+    opacity: { _unit: "percentUnit", _value: 100 }, mode: { _enum: "blendMode", _value: "normal" } });
+  assert.deepStrictEqual(d.expand(2), { _obj: "expand", by: px(2), selectionModifyEffectAtCanvasBounds: false });
+  assert.deepStrictEqual(d.inverseSelection(), { _obj: "inverse" });
+  assert.deepStrictEqual(d.clearSelected(), { _obj: "delete" });
+  assert.deepStrictEqual(d.deselect(), {
+    _obj: "set", _target: [{ _ref: "channel", _property: "selection" }], to: { _enum: "ordinal", _value: "none" } });
+});
+
 test("profile, save, smart object, filters", () => {
   assert.deepStrictEqual(d.convertToSRGB(), {
     _obj: "convertToProfile", _target: [{ _ref: "document", _enum: "ordinal", _value: "targetEnum" }],
@@ -170,4 +192,71 @@ test("recorded map lists every type and is null for a module that is not there",
     const exists = fs.existsSync(path.join(__dirname, "../lib/recorded", `${type}.js`));
     if (!exists) assert.equal(value, null, type);
   }
+});
+
+test("setAdjustment: set on the targeted adjustment layer with the make payloads", () => {
+  const adjTarget = [{ _ref: "adjustmentLayer", _enum: "ordinal", _value: "targetEnum" }];
+  const ch = (v) => ({ _ref: "channel", _enum: "channel", _value: v });
+  const paint = (pts) => pts.map(([x, y]) => ({ _obj: "paint", horizontal: x, vertical: y }));
+  const id = paint([[0, 0], [255, 255]]);
+  const points = { rgb: [[0, 0], [128, 121], [255, 255]], blue: [[0, 0], [255, 250]] };
+  // curves set always carries all four channels, identity for those left out
+  assert.deepStrictEqual(d.setAdjustment("curves", { points }), {
+    _obj: "set", _target: adjTarget,
+    to: { _obj: "curves", presetKind: { _enum: "presetKindType", _value: "presetKindCustom" }, adjustment: [
+      { _obj: "curvesAdjustment", channel: ch("composite"), curve: paint(points.rgb) },
+      { _obj: "curvesAdjustment", channel: ch("red"), curve: id },
+      { _obj: "curvesAdjustment", channel: ch("grain"), curve: id },
+      { _obj: "curvesAdjustment", channel: ch("blue"), curve: paint(points.blue) },
+    ] },
+  });
+  assert.equal(d.setAdjustment("curves", {}).to.adjustment.length, 4);
+  // make keeps only the channels given
+  assert.equal(d.makeAdjustment("curves", { points })[1].to.adjustment.length, 2);
+  assert.deepStrictEqual(d.setAdjustment("hue_sat", { hue: 5 }), d.makeAdjustment("hue_sat", { hue: 5 })[1]);
+  assert.deepStrictEqual(d.setAdjustment("exposure", { exposure: 0.5, offset: 0.1, gamma: 1.2 }), {
+    _obj: "set", _target: adjTarget,
+    to: { _obj: "exposure", presetKind: { _enum: "presetKindType", _value: "presetKindCustom" },
+      exposure: 0.5, offset: 0.1, gammaCorrection: 1.2 },
+  });
+  assert.equal("presetKind" in d.makeAdjustment("exposure", {})[0].using.type, false);
+  assert.deepStrictEqual(d.setAdjustment("brightness_contrast", { brightness: 10, contrast: 5 }), {
+    _obj: "set", _target: adjTarget,
+    to: { _obj: "brightnessEvent", brightness: 10, center: 5, useLegacy: false },
+  });
+  assert.throws(() => d.setAdjustment("light", {}), (e) => e.code === "NOT_SUPPORTED");
+});
+
+test("makeAdjustment levels: default-preset make, then a custom set per channel (green is grain)", () => {
+  const out = d.makeAdjustment("levels", {
+    rgb: { in_black: 4, in_white: 240, gamma: 1.2 },
+    green: { in_white: 231 },
+    blue: { in_white: 224, out_black: 3, out_white: 250 },
+  });
+  assert.deepStrictEqual(out, [
+    { _obj: "make", _target: [{ _ref: "adjustmentLayer" }],
+      using: { _obj: "adjustmentLayer",
+        type: { _obj: "levels", presetKind: { _enum: "presetKindType", _value: "presetKindDefault" } } } },
+    { _obj: "set", _target: [{ _ref: "adjustmentLayer", _enum: "ordinal", _value: "targetEnum" }],
+      to: { _obj: "levels", presetKind: { _enum: "presetKindType", _value: "presetKindCustom" }, adjustment: [
+        { _obj: "levelsAdjustment", channel: { _ref: "channel", _enum: "channel", _value: "composite" },
+          input: [4, 240], gamma: 1.2, output: [0, 255] },
+        { _obj: "levelsAdjustment", channel: { _ref: "channel", _enum: "channel", _value: "grain" },
+          input: [0, 231], gamma: 1, output: [0, 255] },
+        { _obj: "levelsAdjustment", channel: { _ref: "channel", _enum: "channel", _value: "blue" },
+          input: [0, 224], gamma: 1, output: [3, 250] },
+      ] } },
+  ]);
+  // set always carries all four channels, identity for those left out
+  const lv = (v, input = [0, 255]) => ({ _obj: "levelsAdjustment", channel: { _ref: "channel", _enum: "channel", _value: v },
+    input, gamma: 1, output: [0, 255] });
+  assert.deepStrictEqual(d.setAdjustment("levels", { red: { in_white: 250 } }), {
+    _obj: "set", _target: [{ _ref: "adjustmentLayer", _enum: "ordinal", _value: "targetEnum" }],
+    to: { _obj: "levels", presetKind: { _enum: "presetKindType", _value: "presetKindCustom" },
+      adjustment: [lv("composite"), lv("red", [0, 250]), lv("grain"), lv("blue")] },
+  });
+  assert.deepStrictEqual(d.setAdjustment("levels", {}).to.adjustment, [lv("composite"), lv("red"), lv("grain"), lv("blue")]);
+  // make keeps only the channels given, identity composite when none
+  assert.deepStrictEqual(d.makeAdjustment("levels", {})[1].to.adjustment, [lv("composite")]);
+  assert.equal(d.makeAdjustment("levels", {}, "WB")[0].using.name, "WB");
 });

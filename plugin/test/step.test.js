@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { runStep, runRead, bp } = require("../lib/step");
+const { runStep, runScratch, runRead, bp } = require("../lib/step");
 
 // Stub ps whose executeAsModal runs the callback with a recording hostControl.
 // Like the real API, an error thrown inside the modal callback loses its code
@@ -307,4 +307,44 @@ test("runSteps: a refused second suspension rolls back the first and fn never ru
   );
   assert.equal(ran, false);
   assert.deepEqual(history(ps).slice(2), [["resumeHistory", 10, false]]);
+});
+
+test("runScratch success: suspends, always rolls back, returns fn's value", async () => {
+  const ps = makeStub();
+  const v = await runScratch(ps, "Compare", 7, async () => "pixels");
+  assert.equal(v, "pixels");
+  assert.deepEqual(ps.calls.filter((c) => c[0] !== "executeAsModal"), [
+    ["suspendHistory", { documentID: 7, name: "Compare" }],
+    ["resumeHistory", 42, false],
+  ]);
+});
+
+test("runScratch fn throws: rolls back and keeps the error code", async () => {
+  const ps = makeStub();
+  await assert.rejects(
+    runScratch(ps, "Compare", 7, async () => {
+      throw codedError("NO_LAYER", "gone");
+    }),
+    (e) => e.code === "NO_LAYER" && e.message === "gone",
+  );
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "resumeHistory"), [["resumeHistory", 42, false]]);
+});
+
+test("runScratch: a failed rollback after success is an error; fn's own error wins over it", async () => {
+  const ps = makeStub({ resumeThrows: true });
+  await assert.rejects(runScratch(ps, "Compare", 7, async () => 1), (e) => e.code === "STEP_FAILED" && /resume failed/.test(e.message));
+  await assert.rejects(
+    runScratch(ps, "Compare", 7, async () => {
+      throw codedError("X", "first");
+    }),
+    (e) => e.code === "X",
+  );
+});
+
+test("runScratch suspendHistory throws: fn never runs, no resume", async () => {
+  const ps = makeStub({ suspendThrows: true });
+  let ran = false;
+  await assert.rejects(runScratch(ps, "Compare", 7, async () => (ran = true)), /suspend failed/);
+  assert.equal(ran, false);
+  assert.equal(ps.calls.filter((c) => c[0] === "resumeHistory").length, 0);
 });

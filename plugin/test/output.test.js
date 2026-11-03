@@ -15,11 +15,14 @@ function makeStub({
   bits = 8,
   docPath = "/exports/orig.psd",
   copyLayers = 1,
+  name = "IMG_0118.JPG",
+  files = [],
+  docLayers = 3,
 } = {}) {
   const calls = [];
-  const known = new Set(folders);
+  const known = new Set([...folders, ...files]);
   const fail = (name) => {
-    if (failOn === name) throw new Error(`${name} failed`);
+    if ([].concat(failOn).includes(name)) throw new Error(`${name} failed`);
   };
   const folderEntry = (p) => ({
     nativePath: p,
@@ -31,7 +34,14 @@ function makeStub({
     },
     async createFile(name, opts) {
       calls.push(["createFile", p, name, opts]);
-      return { nativePath: `${p}/${name}` };
+      const nativePath = `${p}/${name}`;
+      return {
+        nativePath,
+        async delete() {
+          calls.push(["file.delete", nativePath]);
+          fail("file.delete");
+        },
+      };
     },
   });
   let bitsPerChannel = bits;
@@ -57,6 +67,12 @@ function makeStub({
       copy.width = w;
       copy.height = h;
     },
+    async crop(b) {
+      calls.push(["copy.crop", b]);
+      fail("copy.crop");
+      copy.width = b.right - b.left;
+      copy.height = b.bottom - b.top;
+    },
     async flatten() {
       calls.push(["flatten"]);
       fail("flatten");
@@ -76,9 +92,11 @@ function makeStub({
   };
   const doc = {
     id: 1,
+    name,
     width,
     height,
     path: docPath,
+    layers: Array.from({ length: docLayers }, (_, i) => ({ id: 10 + i })),
     async flatten() {
       calls.push(["doc.flatten"]);
     },
@@ -97,6 +115,7 @@ function makeStub({
     saveAs: {
       async psd(file, opts, asCopy) {
         calls.push(["saveAs.psd", file.nativePath, opts, asCopy]);
+        fail("saveAs.psd");
       },
       async jpg(file, opts, asCopy) {
         calls.push(["saveAs.jpg", file.nativePath, opts, asCopy]);
@@ -321,4 +340,177 @@ test("save without path refuses a never-saved document before any step", async (
   await assert.rejects(output.save(throwing, { format: "psd" }), (e) => e.code === "INVALID_ARGS");
   const ps = makeStub({ docPath: null });
   assert.deepEqual(await output.save(ps, { format: "psd", path: "/exports/new.psd" }), { path: "/exports/new.psd" });
+});
+
+test("ratioBox with focus at the centre equals the centred box", () => {
+  for (const [w, h, r] of [[3000, 2000, "4:5"], [1000, 2000, "16:9"], [4000, 5328, "4:5"], [4000, 5328, "9:16"]]) {
+    assert.deepEqual(output.ratioBox(w, h, r, { x: w / 2, y: h / 2 }), output.ratioBox(w, h, r));
+  }
+});
+
+test("ratioBox with focus near a corner clamps inside the canvas", () => {
+  assert.deepEqual(output.ratioBox(3000, 2000, "4:5", { x: 10, y: 10 }), { left: 0, top: 0, right: 1600, bottom: 2000 });
+  assert.deepEqual(output.ratioBox(3000, 2000, "4:5", { x: 2990, y: 1990 }), { left: 1400, top: 0, right: 3000, bottom: 2000 });
+  assert.deepEqual(output.ratioBox(3000, 2000, "4:5", { x: 1000, y: 0 }), { left: 200, top: 0, right: 1800, bottom: 2000 });
+});
+
+test("crop ratio with focus reports the shifted bbox", async () => {
+  const ps = makeStub({ width: 3000, height: 2000 });
+  const out = await output.crop(ps, { ratio: "4:5", focus: { x: 100, y: 500 } });
+  const bbox = { left: 0, top: 0, right: 1600, bottom: 2000 };
+  assert.deepEqual(out, { bbox });
+  assert.deepEqual(ps.calls[2], ["crop", bbox]);
+});
+
+test("crop rejects focus with bbox or outside the canvas before any step", async () => {
+  const ps = makeStub({ width: 3000, height: 2000 });
+  const bbox = { left: 0, top: 0, right: 10, bottom: 10 };
+  await assert.rejects(output.crop(ps, { bbox, focus: { x: 5, y: 5 } }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(output.crop(ps, { ratio: "4:5", focus: { x: 3001, y: 5 } }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(output.crop(ps, { ratio: "4:5", focus: { x: -1, y: 5 } }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(output.crop(ps, { ratio: "4:5", focus: { x: "a", y: 5 } }), (e) => e.code === "INVALID_ARGS");
+  assert.deepEqual(ps.calls, []);
+});
+
+test("psdStem strips image extensions and keeps other names", () => {
+  assert.equal(output.psdStem("IMG_0118.JPG"), "IMG_0118");
+  assert.equal(output.psdStem("a.jpeg"), "a");
+  assert.equal(output.psdStem("b.HEIC"), "b");
+  assert.equal(output.psdStem("c.tif"), "c");
+  assert.equal(output.psdStem("d.tiff"), "d");
+  assert.equal(output.psdStem("e.png"), "e");
+  assert.equal(output.psdStem("f.psd"), "f");
+  assert.equal(output.psdStem("Untitled-1"), "Untitled-1");
+  assert.equal(output.psdStem("room copy"), "room copy");
+  assert.equal(output.psdStem("a/b.jpg"), "a-b");
+});
+
+test("save_psd writes <stem>.psd as a copy, no history state", async () => {
+  const ps = makeStub({ name: "IMG_0118.JPG", docPath: "/photos/IMG_0118.JPG" });
+  const out = await output.save_psd(ps, { folder: "/exports/nov1" });
+  assert.deepEqual(out, { path: "/exports/nov1/IMG_0118.psd", layers: 3 });
+  assert.deepEqual(ps.calls, [
+    ["executeAsModal", "Claude: save_psd"],
+    ["getEntryWithUrl", "file:/exports/nov1/IMG_0118.psd"],
+    ["getEntryWithUrl", "file:/exports/nov1"],
+    ["getEntryWithUrl", "file:/exports"],
+    ["createFolder", "/exports", "nov1"],
+    ["createFile", "/exports/nov1", "IMG_0118.psd", { overwrite: false }],
+    ["saveAs.psd", "/exports/nov1/IMG_0118.psd", { embedColorProfile: true, maximizeCompatibility: true }, true],
+  ]);
+  assert.ok(!names(ps.calls).includes("suspendHistory"));
+});
+
+test("save_psd uses -edit when the open document is the target file", async () => {
+  const ps = makeStub({ name: "room.psd", docPath: "/Exports/Room.PSD", folders: ["/exports"] });
+  const out = await output.save_psd(ps, { folder: "/exports" });
+  assert.equal(out.path, "/exports/room-edit.psd");
+});
+
+test("save_psd picks -2 then -3 when the name is taken", async () => {
+  const ps = makeStub({ files: ["/exports/IMG_0118.psd"] });
+  assert.equal((await output.save_psd(ps, { folder: "/exports" })).path, "/exports/IMG_0118-2.psd");
+  const ps3 = makeStub({ files: ["/exports/IMG_0118.psd", "/exports/IMG_0118-2.psd"] });
+  assert.equal((await output.save_psd(ps3, { folder: "/exports" })).path, "/exports/IMG_0118-3.psd");
+});
+
+test("save_psd answers SAVE_EXISTS after -99 and never saves", async () => {
+  const files = ["/exports/IMG_0118.psd"];
+  for (let n = 2; n <= 99; n++) files.push(`/exports/IMG_0118-${n}.psd`);
+  const ps = makeStub({ files });
+  await assert.rejects(output.save_psd(ps, { folder: "/exports" }), (e) => e.code === "SAVE_EXISTS");
+  assert.ok(!names(ps.calls).includes("saveAs.psd"));
+  assert.ok(!names(ps.calls).includes("createFile"));
+});
+
+test("save_psd: a failed save deletes the empty file and answers SAVE_FAILED", async () => {
+  const ps = makeStub({ failOn: "saveAs.psd" });
+  await assert.rejects(
+    output.save_psd(ps, { folder: "/exports" }),
+    (e) => e.code === "SAVE_FAILED" && /IMG_0118\.psd/.test(e.message) && /saveAs\.psd failed/.test(e.message),
+  );
+  const tail = ps.calls.slice(-2);
+  assert.deepEqual(tail, [
+    ["saveAs.psd", "/exports/IMG_0118.psd", { embedColorProfile: true, maximizeCompatibility: true }, true],
+    ["file.delete", "/exports/IMG_0118.psd"],
+  ]);
+});
+
+test("save_psd: a failed delete after a failed save still answers SAVE_FAILED", async () => {
+  const ps = makeStub({ failOn: ["saveAs.psd", "file.delete"] });
+  await assert.rejects(
+    output.save_psd(ps, { folder: "/exports" }),
+    (e) => e.code === "SAVE_FAILED" && /saveAs\.psd failed/.test(e.message),
+  );
+  assert.ok(names(ps.calls).includes("file.delete"));
+});
+
+test("save_psd works for a never-saved document", async () => {
+  const ps = makeStub({ name: "Untitled-1", docPath: null });
+  assert.equal((await output.save_psd(ps, { folder: "/exports" })).path, "/exports/Untitled-1.psd");
+});
+
+test("save_psd validates the folder before touching Photoshop", async () => {
+  const ps = makeStub();
+  for (const folder of [undefined, "rel/dir", "/exports/../etc", 5]) {
+    await assert.rejects(output.save_psd(ps, { folder }), (e) => e.code === "INVALID_ARGS");
+  }
+  assert.deepEqual(ps.calls, []);
+});
+
+test("export preset post crops the copy to 4:5 and resizes to 1080x1350", async () => {
+  const ps = makeStub({ width: 4000, height: 5328, copyLayers: 2 });
+  const out = await output.export(ps, { path: "/exports/p.jpg", preset: "post", quality: 10 });
+  const bbox = { left: 0, top: 164, right: 4000, bottom: 5164 };
+  assert.deepEqual(bbox, output.ratioBox(4000, 5328, "4:5"));
+  assert.deepEqual(out, { path: "/exports/p.jpg", width: 1080, height: 1350, preset: "post", crop_bbox: bbox });
+  const n = names(ps.calls);
+  assert.deepEqual(ps.calls[n.indexOf("copy.crop")], ["copy.crop", bbox]);
+  assert.deepEqual(ps.calls[n.indexOf("resizeImage")], ["resizeImage", 1080, 1350, undefined, "bicubicSharper"]);
+  const order = ["duplicate", "flatten", "copy.crop", "convertProfile", "resizeImage", "copy.saveAs.jpg", "closeWithoutSaving"];
+  const idx = order.map((x) => n.indexOf(x));
+  assert.deepEqual([...idx].sort((a, b) => a - b), idx);
+  assert.ok(!n.includes("crop"), "the open document is never cropped");
+});
+
+test("export preset story crops to 9:16 and resizes to 1080x1920", async () => {
+  const ps = makeStub({ width: 4000, height: 5328 });
+  const out = await output.export(ps, { path: "/exports/s.jpg", preset: "story", quality: 10 });
+  const bbox = output.ratioBox(4000, 5328, "9:16");
+  assert.equal(bbox.right - bbox.left, 2997);
+  assert.deepEqual(out, { path: "/exports/s.jpg", width: 1080, height: 1920, preset: "story", crop_bbox: bbox });
+});
+
+test("export preset with focus shifts the crop", async () => {
+  const ps = makeStub({ width: 4000, height: 5328 });
+  const out = await output.export(ps, { path: "/exports/s.jpg", preset: "story", focus: { x: 3900, y: 100 }, quality: 10 });
+  assert.deepEqual(out.crop_bbox, { left: 1003, top: 0, right: 4000, bottom: 5328 });
+  assert.deepEqual(ps.calls.find((c) => c[0] === "copy.crop"), ["copy.crop", out.crop_bbox]);
+});
+
+test("export preset ignores long_edge_px and never upscales a small copy", async () => {
+  const ps = makeStub({ width: 800, height: 1200 });
+  const out = await output.export(ps, { path: "/exports/s.jpg", preset: "post", long_edge_px: 5, quality: 10 });
+  assert.deepEqual(out, { path: "/exports/s.jpg", width: 800, height: 1000, preset: "post", crop_bbox: { left: 0, top: 100, right: 800, bottom: 1100 } });
+  assert.ok(!names(ps.calls).includes("resizeImage"));
+});
+
+test("export preset closes the copy when its crop fails", async () => {
+  const ps = makeStub({ width: 4000, height: 5328, failOn: "copy.crop" });
+  await assert.rejects(output.export(ps, { path: "/exports/s.jpg", preset: "post", quality: 10 }));
+  assert.deepEqual(ps.calls.slice(-2), [["closeWithoutSaving"], ["activate", 1]]);
+});
+
+test("export rejects a bad preset, focus without preset, or focus outside before any step", async () => {
+  const ps = makeStub({ width: 4000, height: 5328 });
+  await assert.rejects(output.export(ps, { path: "/exports/a.jpg", preset: "reel", quality: 10 }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(
+    output.export(ps, { path: "/exports/a.jpg", long_edge_px: 1350, focus: { x: 1, y: 1 }, quality: 10 }),
+    (e) => e.code === "INVALID_ARGS",
+  );
+  await assert.rejects(
+    output.export(ps, { path: "/exports/a.jpg", preset: "post", focus: { x: 1, y: 6000 }, quality: 10 }),
+    (e) => e.code === "INVALID_ARGS",
+  );
+  assert.deepEqual(ps.calls, []);
 });

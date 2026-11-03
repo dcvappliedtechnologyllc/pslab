@@ -447,4 +447,8 @@ async function blur_layer(ps, args = {}) {
   });
 }
 
-module.exports = { select_object, copy_to, refine_edge, match_tone, blur_layer, setRecorded };
+module.exports = {
+  select_object, copy_to, refine_edge, match_tone, blur_layer, setRecorded,
+  // shared with workflow.js
+  resolvePasted, allIds, activate, restore,
+};

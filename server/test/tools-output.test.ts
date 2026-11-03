@@ -5,7 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { PluginBridge } from "../src/bridge.js";
-import { exportPath, registerOutputTools } from "../src/tools/output.js";
+import { exportPath, psdFolder, registerOutputTools } from "../src/tools/output.js";
 import { FakePlugin } from "./fake-plugin.js";
 
 function textOf(res: unknown): string {
@@ -34,6 +34,19 @@ describe("exportPath", () => {
   it("joins root, shoot and filename; .JPG is accepted", () => {
     expect(exportPath("/root", "shoot1", "a.jpg")).toBe(path.join("/root", "shoot1", "a.jpg"));
     expect(exportPath("/root", "shoot1", "A.JPG")).toBe(path.join("/root", "shoot1", "A.JPG"));
+  });
+});
+
+describe("psdFolder", () => {
+  it("prefers folder, then root/shoot, then root", () => {
+    expect(psdFolder("/root", "s", "/abs/dir")).toBe("/abs/dir");
+    expect(psdFolder("/root", "s")).toBe(path.join("/root", "s"));
+    expect(psdFolder("/root")).toBe("/root");
+  });
+
+  it("refuses relative folders, .. and unsafe shoots", () => {
+    for (const f of ["rel/dir", "/abs/../etc", ".."]) expect(() => psdFolder("/root", undefined, f)).toThrow("folder must be");
+    for (const s of ["", ".", "..", "a/b", "a\\b", "../x"]) expect(() => psdFolder("/root", s)).toThrow("invalid shoot");
   });
 });
 
@@ -74,7 +87,7 @@ describe("output tools over MCP", () => {
 
   it("lists crop, export and save with confirm, export root and Instagram defaults described", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["crop", "export", "save"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["crop", "export", "save", "save_psd"]);
     for (const t of tools) expect(t.description).toContain("confirm: true");
     const exp = tools.find((t) => t.name === "export")!;
     expect(exp.description).toContain("pslab-exports");
@@ -92,6 +105,8 @@ describe("output tools over MCP", () => {
       { name: "export", arguments: { shoot: "s", filename: "a.jpg" }, verb: "export" },
       { name: "export", arguments: { shoot: "s", filename: "a.jpg", confirm: false }, verb: "export" },
       { name: "save", arguments: { format: "psd" }, verb: "save" },
+      { name: "save_psd", arguments: {}, verb: "save a PSD" },
+      { name: "save_psd", arguments: { shoot: "s", confirm: false }, verb: "save a PSD" },
     ];
     for (const c of calls) {
       const res = await client.callTool({ name: c.name, arguments: c.arguments });
@@ -157,6 +172,18 @@ describe("output tools over MCP", () => {
     ]);
   });
 
+  it("crop forwards focus with a ratio and refuses focus with bbox", async () => {
+    const bbox = { left: 0, top: 0, right: 10, bottom: 10 };
+    const bad = await client.callTool({ name: "crop", arguments: { bbox, focus: { x: 1, y: 1 }, confirm: true } });
+    expect(bad.isError).toBe(true);
+    expect(textOf(bad)).toContain("focus only applies to a ratio crop");
+    expect(seen.length).toBe(0);
+    await client.callTool({ name: "crop", arguments: { ratio: "4:5", focus: { x: 100, y: 200 }, confirm: true } });
+    expect(seen).toEqual([{ action: "crop", args: { ratio: "4:5", focus: { x: 100, y: 200 } } }]);
+    const { tools } = await client.listTools();
+    expect(tools.find((t) => t.name === "crop")!.description).toContain("focus {x, y}");
+  });
+
   it("save checks path is absolute and matches format", async () => {
     for (const a of [
       { format: "psd", path: "rel/a.psd" },
@@ -173,5 +200,62 @@ describe("output tools over MCP", () => {
       { action: "save", args: { format: "psd" } },
       { action: "save", args: { format: "jpg", path: "/abs/A.JPG" } },
     ]);
+  });
+
+  it("save_psd resolves the folder under PSLAB_EXPORT_ROOT and forwards doc and folder", async () => {
+    await client.callTool({ name: "save_psd", arguments: { confirm: true } });
+    await client.callTool({ name: "save_psd", arguments: { doc: 4, shoot: "nov1", confirm: true } });
+    await client.callTool({ name: "save_psd", arguments: { shoot: "nov1", folder: "/abs/psd", confirm: true } });
+    expect(seen).toEqual([
+      { action: "save_psd", args: { folder: root } },
+      { action: "save_psd", args: { doc: 4, folder: path.join(root, "nov1") } },
+      { action: "save_psd", args: { folder: "/abs/psd" } },
+    ]);
+  });
+
+  it("save_psd refuses .. and relative folders without calling the plugin", async () => {
+    for (const a of [{ folder: "/abs/../etc" }, { folder: "rel" }, { shoot: "../x" }, { shoot: "a/b" }]) {
+      const res = await client.callTool({ name: "save_psd", arguments: { ...a, confirm: true } });
+      expect(res.isError).toBe(true);
+    }
+    expect(seen.length).toBe(0);
+    const { tools } = await client.listTools();
+    const d = tools.find((t) => t.name === "save_psd")!.description!;
+    expect(d).toContain("confirm: true");
+    expect(d).toContain("Never overwrites");
+    expect(d).toContain("keeps referring to its own file");
+  });
+
+  it("export forwards preset and focus and drops long_edge_px with a preset", async () => {
+    await client.callTool({
+      name: "export",
+      arguments: { shoot: "nov1", filename: "a.jpg", preset: "post", long_edge_px: 2048, confirm: true },
+    });
+    await client.callTool({
+      name: "export",
+      arguments: { doc: 2, shoot: "nov1", filename: "b.jpg", preset: "story", focus: { x: 10, y: 20 }, quality: 12, confirm: true },
+    });
+    expect(seen).toEqual([
+      { action: "export", args: { path: path.join(root, "nov1", "a.jpg"), preset: "post", quality: 10 } },
+      {
+        action: "export",
+        args: { doc: 2, path: path.join(root, "nov1", "b.jpg"), preset: "story", focus: { x: 10, y: 20 }, quality: 12 },
+      },
+    ]);
+  });
+
+  it("export refuses focus without a preset and an unknown preset", async () => {
+    const a = await client.callTool({ name: "export", arguments: { shoot: "s", filename: "a.jpg", focus: { x: 1, y: 1 }, confirm: true } });
+    const b = await client.callTool({ name: "export", arguments: { shoot: "s", filename: "a.jpg", preset: "reel", confirm: true } });
+    expect(a.isError).toBe(true);
+    expect(textOf(a)).toContain("focus only applies with a preset");
+    expect(b.isError).toBe(true);
+    expect(seen.length).toBe(0);
+    const { tools } = await client.listTools();
+    const d = tools.find((t) => t.name === "export")!.description!;
+    expect(d).toContain("1080x1350");
+    expect(d).toContain("1080x1920");
+    expect(d).toContain("long_edge_px is ignored");
+    expect(d).toContain("document is NOT cropped");
   });
 });
