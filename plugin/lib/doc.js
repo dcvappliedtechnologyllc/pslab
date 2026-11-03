@@ -218,4 +218,4 @@ async function selectLayer(ps, doc, id) {
   );
 }
 
-module.exports = { bitsOf, docSummary, findLayer, selectLayer, hasUserMask, hasUserMaskStrict, resolveDoc };
+module.exports = { bitsOf, docSummary, findLayer, kindOverrides, selectLayer, hasUserMask, hasUserMaskStrict, resolveDoc };

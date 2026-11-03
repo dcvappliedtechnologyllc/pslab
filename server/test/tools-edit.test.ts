@@ -39,13 +39,16 @@ describe("edit tools over MCP", () => {
     await bridge.stop();
   });
 
-  it("lists all six edit tools with descriptions", async () => {
+  it("lists all edit tools with descriptions", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
-    expect(names).toEqual(["add_adjustment", "add_pixel_layer", "mask_from_polygon", "mask_from_subject", "paint_mask", "set_layer"]);
+    expect(names).toEqual([
+      "add_adjustment", "add_pixel_layer", "delete_layer", "mask_from_polygon", "mask_from_subject", "paint_mask",
+      "set_adjustment", "set_layer", "white_balance",
+    ]);
     for (const t of tools) expect((t.description ?? "").length).toBeGreaterThan(40);
     const add = tools.find((t) => t.name === "add_adjustment")!;
-    for (const type of ["light", "curves", "hue_sat", "color_vibrance", "clarity_dehaze", "exposure", "brightness_contrast"]) {
+    for (const type of ["light", "curves", "hue_sat", "color_vibrance", "clarity_dehaze", "exposure", "brightness_contrast", "levels"]) {
       expect(add.description).toContain(type);
     }
     expect(add.description).toContain("ignores whites and blacks");
@@ -154,5 +157,138 @@ describe("edit tools over MCP", () => {
     const res = await client.callTool({ name: "set_layer", arguments: { layer: 9, visible: false } });
     expect(res.isError).toBe(true);
     expect(textOf(res)).toBe("NO_LAYER: No layer with id 9");
+  });
+
+  it("delete_layer refuses without confirm: true and never calls the plugin", async () => {
+    for (const extra of [{}, { confirm: false }]) {
+      const res = await client.callTool({ name: "delete_layer", arguments: { layer: 7, ...extra } });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toBe("Set confirm: true to delete_layer.");
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it("delete_layer with confirm forwards doc, layer and confirm", async () => {
+    plugin.onRequest(async (action, args) => {
+      seen.push({ action, args });
+      return { ok: true, result: { ok: true, deleted: { id: 7, name: "Glare fix" } }, doc: null };
+    });
+    const res = await client.callTool({ name: "delete_layer", arguments: { doc: 3, layer: 7, confirm: true } });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "delete_layer", args: { doc: 3, layer: 7, confirm: true } }]);
+    expect(JSON.parse(textOf(res)).result).toEqual({ ok: true, deleted: { id: 7, name: "Glare fix" } });
+  });
+
+  it("delete_layer passes PROTECTED_LAYER through as an error", async () => {
+    plugin.onRequest(async () => ({ ok: false, error: { code: "PROTECTED_LAYER", message: "Background" } }));
+    const res = await client.callTool({ name: "delete_layer", arguments: { layer: 1, confirm: true } });
+    expect(res.isError).toBe(true);
+    expect(textOf(res)).toContain("PROTECTED_LAYER");
+  });
+
+  it("set_adjustment forwards doc, layer, type and params", async () => {
+    plugin.onRequest(async (action, args) => {
+      seen.push({ action, args });
+      return { ok: true, result: { ok: true, applied: { exposure: 0.4 } }, doc: null };
+    });
+    const args = { doc: 2, layer: 9, type: "light", params: { exposure: 0.4 } };
+    const res = await client.callTool({ name: "set_adjustment", arguments: args });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "set_adjustment", args }]);
+    expect(JSON.parse(textOf(res)).result).toEqual({ ok: true, applied: { exposure: 0.4 } });
+  });
+
+  it("set_adjustment rejects out-of-range values and params of another type without calling the plugin", async () => {
+    const r1 = await client.callTool({ name: "set_adjustment", arguments: { layer: 9, type: "light", params: { contrast: 150 } } });
+    const r2 = await client.callTool({ name: "set_adjustment", arguments: { layer: 9, type: "curves", params: { exposure: 1 } } });
+    const r3 = await client.callTool({ name: "set_adjustment", arguments: { type: "curves", params: {} } });
+    expect(r1.isError).toBe(true);
+    expect(r2.isError).toBe(true);
+    expect(textOf(r2)).toContain("do not apply to curves");
+    expect(r3.isError).toBe(true);
+    expect(seen).toEqual([]);
+  });
+
+  it("set_adjustment passes TYPE_MISMATCH and NOT_ADJUSTMENT through", async () => {
+    for (const code of ["TYPE_MISMATCH", "NOT_ADJUSTMENT"]) {
+      plugin.onRequest(async () => ({ ok: false, error: { code, message: "no" } }));
+      const res = await client.callTool({ name: "set_adjustment", arguments: { layer: 9, type: "curves", params: {} } });
+      expect(res.isError).toBe(true);
+      expect(textOf(res)).toContain(code);
+    }
+  });
+
+  it("add_adjustment and set_adjustment forward valid levels params", async () => {
+    const params = { rgb: { in_white: 240, gamma: 1.2 }, green: { in_white: 231 }, blue: { in_black: 3, out_white: 250 } };
+    const r1 = await client.callTool({ name: "add_adjustment", arguments: { type: "levels", params } });
+    const r2 = await client.callTool({ name: "set_adjustment", arguments: { layer: 5, type: "levels", params } });
+    expect(r1.isError).toBeFalsy();
+    expect(r2.isError).toBeFalsy();
+    expect(seen).toEqual([
+      { action: "add_adjustment", args: { type: "levels", params } },
+      { action: "set_adjustment", args: { layer: 5, type: "levels", params } },
+    ]);
+  });
+
+  it("levels rejects bad ranges, order and fields without calling the plugin", async () => {
+    const bad = [
+      { rgb: { in_black: 200, in_white: 100 } },
+      { rgb: { in_black: 255 } },
+      { red: { out_black: 200, out_white: 100 } },
+      { green: { gamma: 0.05 } },
+      { green: { gamma: 10 } },
+      { blue: { in_white: 256 } },
+      { blue: { in_white: 200.5 } },
+      { rgb: { in_whte: 200 } },
+    ];
+    for (const params of bad) {
+      for (const [name, extra] of [["add_adjustment", {}], ["set_adjustment", { layer: 5 }]] as const) {
+        const res = await client.callTool({ name, arguments: { ...extra, type: "levels", params } });
+        expect(res.isError, `${name} ${JSON.stringify(params)}`).toBe(true);
+      }
+    }
+    const r = await client.callTool({ name: "add_adjustment", arguments: { type: "curves", params: { rgb: { in_white: 200 } } } });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toContain("do not apply to curves");
+    expect(seen).toEqual([]);
+  });
+
+  it("white_balance fills defaults and forwards; the description explains the neutral patch", async () => {
+    const result = {
+      levels: { red: 255, green: 231, blue: 224 },
+      before: { r: 130, g: 118, b: 114 },
+      after: { r: 130, g: 130, b: 130 },
+      layer_id: 42,
+    };
+    plugin.onRequest(async (action, args) => {
+      seen.push({ action, args });
+      return { ok: true, result, doc: null };
+    });
+    const bbox = { left: 10, top: 20, right: 110, bottom: 90 };
+    const res = await client.callTool({ name: "white_balance", arguments: { bbox } });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "white_balance", args: { bbox, strength: 1, keep_warmth: 0, name: "White balance" } }]);
+    expect(JSON.parse(textOf(res)).result).toEqual(result);
+    const { tools } = await client.listTools();
+    const desc = tools.find((t) => t.name === "white_balance")!.description!;
+    for (const words of ["image pixels", "grey or white", "wall", "marble", "keep_warmth 0.5 keeps half the red-blue gap", "directly above"]) {
+      expect(desc).toContain(words);
+    }
+  });
+
+  it("white_balance rejects strength/keep_warmth outside 0..1 and empty or missing boxes", async () => {
+    const bbox = { left: 10, top: 20, right: 110, bottom: 90 };
+    const bad = [
+      { bbox, strength: 1.2 },
+      { bbox, strength: 0 },
+      { bbox, keep_warmth: -0.5 },
+      { bbox: { left: 10, top: 20, right: 10, bottom: 90 } },
+      {},
+    ];
+    for (const args of bad) {
+      const res = await client.callTool({ name: "white_balance", arguments: args });
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+    }
+    expect(seen).toEqual([]);
   });
 });

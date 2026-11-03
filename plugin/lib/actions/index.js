@@ -5,6 +5,7 @@ const dev = require("./dev");
 const edit = require("./edit");
 const composite = require("./composite");
 const output = require("./output");
+const masks = require("./masks");
 
 module.exports = {
   get_document: see.get_document,
@@ -18,6 +19,13 @@ module.exports = {
   mask_from_subject: edit.mask_from_subject,
   paint_mask: edit.paint_mask,
   set_layer: edit.set_layer,
+  mask_from_luminance: masks.mask_from_luminance,
+  mask_gradient: masks.mask_gradient,
+  mask_from_color: masks.mask_from_color,
+  preview_mask: masks.preview_mask,
+  delete_layer: edit.delete_layer,
+  set_adjustment: edit.set_adjustment,
+  white_balance: edit.white_balance,
   select_object: composite.select_object,
   copy_to: composite.copy_to,
   refine_edge: composite.refine_edge,

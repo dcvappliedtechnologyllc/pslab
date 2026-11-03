@@ -26,55 +26,120 @@ const CURVE_CHANNELS = [
   ["blue", "blue"],
 ];
 
+function notSupported(type) {
+  const err = new Error(`Adjustment type not supported: ${type}`);
+  err.code = "NOT_SUPPORTED";
+  return err;
+}
+
+// full: one entry per channel (composite, red, grain, blue), identity for the
+// channels not given, so a set replaces every channel. Without full (make),
+// only the channels given, or an identity composite when none is.
+function curvesTo(p, full = false) {
+  const points = p.points || {};
+  const IDENTITY = [[0, 0], [255, 255]];
+  const channels = full ? CURVE_CHANNELS : CURVE_CHANNELS.filter(([k]) => Array.isArray(points[k]));
+  let adjustment = channels.map(([k, ch]) => ({
+    _obj: "curvesAdjustment",
+    channel: { _ref: "channel", _enum: "channel", _value: ch },
+    curve: (Array.isArray(points[k]) ? points[k] : IDENTITY).map(([x, y]) => ({ _obj: "paint", horizontal: x, vertical: y })),
+  }));
+  if (adjustment.length === 0) {
+    adjustment = [{
+      _obj: "curvesAdjustment",
+      channel: { _ref: "channel", _enum: "channel", _value: "composite" },
+      curve: [[0, 0], [255, 255]].map(([x, y]) => ({ _obj: "paint", horizontal: x, vertical: y })),
+    }];
+  }
+  return { _obj: "curves", presetKind: presetKind("presetKindCustom"), adjustment };
+}
+
+const hueSatTo = (p) => ({
+  _obj: "hueSaturation", adjustment: [{
+    _obj: "hueSatAdjustmentV2", hue: num(p.hue), saturation: num(p.saturation), lightness: num(p.lightness),
+  }],
+});
+
+const exposureTo = (p) => ({
+  _obj: "exposure", exposure: num(p.exposure), offset: num(p.offset), gammaCorrection: num(p.gamma, 1),
+});
+
+const brightnessTo = (p) => ({
+  _obj: "brightnessEvent", brightness: num(p.brightness), center: num(p.contrast), useLegacy: false,
+});
+
+// Levels per channel {in_black, in_white, gamma, out_black, out_white},
+// defaults 0/255/1/0/255; one levelsAdjustment per channel given, or an
+// identity composite entry when none is.
+function levelsTo(p, full = false) {
+  const entry = (ch, v) => ({
+    _obj: "levelsAdjustment",
+    channel: { _ref: "channel", _enum: "channel", _value: ch },
+    input: [num(v.in_black, 0), num(v.in_white, 255)],
+    gamma: num(v.gamma, 1),
+    output: [num(v.out_black, 0), num(v.out_white, 255)],
+  });
+  const given = (k) => p[k] && typeof p[k] === "object";
+  const channels = full ? CURVE_CHANNELS : CURVE_CHANNELS.filter(([k]) => given(k));
+  let adjustment = channels.map(([k, ch]) => entry(ch, given(k) ? p[k] : {}));
+  if (adjustment.length === 0) adjustment = [entry("composite", {})];
+  return { _obj: "levels", presetKind: presetKind("presetKindCustom"), adjustment };
+}
+
+const vibranceTo = (p) => ({ _obj: "vibrance", vibrance: num(p.vibrance), saturation: num(p.saturation) });
+
+// The adjustment payload for a built-in type (the `to` of its set). full:
+// the payload for editing an existing layer (every channel, preset kinds).
+function adjustmentTo(type, p, full = false) {
+  switch (type) {
+    case "curves": return curvesTo(p, full);
+    case "hue_sat": return hueSatTo(p);
+    case "levels": return levelsTo(p, full);
+    case "exposure":
+      return full ? { _obj: "exposure", presetKind: presetKind("presetKindCustom"), ...exposureTo(p) } : exposureTo(p);
+    case "brightness_contrast": return brightnessTo(p);
+    case "vibrance": return vibranceTo(p);
+    default: throw notSupported(type);
+  }
+}
+
 function makeAdjustment(type, params, name) {
   const p = params || {};
   switch (type) {
-    case "curves": {
-      const points = p.points || {};
-      let adjustment = CURVE_CHANNELS.filter(([k]) => Array.isArray(points[k])).map(([k, ch]) => ({
-        _obj: "curvesAdjustment",
-        channel: { _ref: "channel", _enum: "channel", _value: ch },
-        curve: points[k].map(([x, y]) => ({ _obj: "paint", horizontal: x, vertical: y })),
-      }));
-      if (adjustment.length === 0) {
-        adjustment = [{
-          _obj: "curvesAdjustment",
-          channel: { _ref: "channel", _enum: "channel", _value: "composite" },
-          curve: [[0, 0], [255, 255]].map(([x, y]) => ({ _obj: "paint", horizontal: x, vertical: y })),
-        }];
-      }
+    case "curves":
       return [
         makeLayerDescriptor(name, { _obj: "curves", presetKind: presetKind("presetKindDefault") }),
-        { _obj: "set", _target: adjTarget(),
-          to: { _obj: "curves", presetKind: presetKind("presetKindCustom"), adjustment } },
+        setDescriptor("curves", p, false),
       ];
-    }
     case "hue_sat":
       return [
         makeLayerDescriptor(name, { _obj: "hueSaturation", presetKind: presetKind("presetKindDefault") }),
-        { _obj: "set", _target: adjTarget(),
-          to: { _obj: "hueSaturation", adjustment: [{
-            _obj: "hueSatAdjustmentV2", hue: num(p.hue), saturation: num(p.saturation), lightness: num(p.lightness),
-          }] } },
+        setDescriptor("hue_sat", p, false),
+      ];
+    case "levels":
+      return [
+        makeLayerDescriptor(name, { _obj: "levels", presetKind: presetKind("presetKindDefault") }),
+        setDescriptor("levels", p, false),
       ];
     case "exposure":
-      return [makeLayerDescriptor(name, {
-        _obj: "exposure", exposure: num(p.exposure), offset: num(p.offset), gammaCorrection: num(p.gamma, 1),
-      })];
     case "brightness_contrast":
-      return [makeLayerDescriptor(name, {
-        _obj: "brightnessEvent", brightness: num(p.brightness), center: num(p.contrast), useLegacy: false,
-      })];
     case "vibrance":
-      return [makeLayerDescriptor(name, {
-        _obj: "vibrance", vibrance: num(p.vibrance), saturation: num(p.saturation),
-      })];
-    default: {
-      const err = new Error(`Adjustment type not supported: ${type}`);
-      err.code = "NOT_SUPPORTED";
-      throw err;
-    }
+      return [makeLayerDescriptor(name, adjustmentTo(type, p))];
+    default:
+      throw notSupported(type);
   }
+}
+
+function setDescriptor(type, params, full) {
+  return { _obj: "set", _target: adjTarget(), to: adjustmentTo(type, params || {}, full) };
+}
+
+// Edit the selected adjustment layer in place (select it first with
+// selectLayerById). Curves and levels carry all four channels (identity for
+// those not given) so omitted channels reset; exposure adds presetKindCustom.
+// Otherwise the payloads makeAdjustment uses.
+function setAdjustment(type, params) {
+  return setDescriptor(type, params, true);
 }
 
 function clipToBelow() {
@@ -208,7 +273,7 @@ function duplicateLayerTo(docId, name) {
 }
 
 module.exports = {
-  selectLayerById, makeAdjustment, clipToBelow, makeMaskFromSelection, selectMaskChannel, selectRgbChannel,
+  selectLayerById, makeAdjustment, setAdjustment, clipToBelow, makeMaskFromSelection, selectMaskChannel, selectRgbChannel,
   invert, setMaskFeather, selectRectangle, selectPolygon, objectSelect, selectSubject, contract, feather,
   fill, transform, convertToSRGB, saveJpeg, newPlacedLayer, gaussianBlur, defringe, duplicateLayerTo,
 };

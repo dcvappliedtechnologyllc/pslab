@@ -140,12 +140,129 @@ function polygonMask(w, h, points, featherPx, invert) {
       for (let x = from; x <= to; x++) fill[y * w + x] = 255;
     }
   }
+  return finishMask(fill, w, h, featherPx, invert);
+}
+
+// Float 0..255 coverage -> 8-bit mask: (featherPx > 0) a box blur of radius
+// round(featherPx) applied twice, then optional invert. Shared by every mask
+// builder so feathering means the same thing everywhere.
+function finishMask(fill, w, h, featherPx, invert) {
   const r = featherPx > 0 ? Math.round(featherPx) : 0;
   const src = r > 0 ? boxBlur(boxBlur(fill, w, h, r), w, h, r) : fill;
   const out = new Uint8Array(w * h);
   for (let i = 0; i < out.length; i++) {
     const v = clampByte(src[i]);
     out[i] = invert ? 255 - v : v;
+  }
+  return out;
+}
+
+// Rec. 709 luminance, the formula region_stats uses.
+const lumaOf = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+// rgb: chunky 8-bit RGB (w*h*3). 255 where minL <= L <= maxL, else 0.
+// L is snapped to 1e-6 first: the weights sum to 1 only up to float error, so
+// lumaOf(255,255,255) is 254.99999999999997 and would miss an inclusive 255.
+function luminanceMask(rgb, w, h, minL, maxL, featherPx = 0, invert = false) {
+  const n = w * h;
+  const fill = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const l = Math.round(lumaOf(rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]) * 1e6) / 1e6;
+    if (l >= minL && l <= maxL) fill[i] = 255;
+  }
+  return finishMask(fill, w, h, featherPx, invert);
+}
+
+// Mean colour of the (2*radius+1)^2 box centred on pixel (floor x, floor y),
+// clipped to the canvas; rounded to integers.
+function sampleMean(rgb, w, h, x, y, radius = 2) {
+  const cx = Math.floor(x);
+  const cy = Math.floor(y);
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let n = 0;
+  for (let yy = Math.max(0, cy - radius); yy <= Math.min(h - 1, cy + radius); yy++) {
+    for (let xx = Math.max(0, cx - radius); xx <= Math.min(w - 1, cx + radius); xx++) {
+      const i = (yy * w + xx) * 3;
+      r += rgb[i];
+      g += rgb[i + 1];
+      b += rgb[i + 2];
+      n++;
+    }
+  }
+  if (n === 0) throw codedError("OUT_OF_BOUNDS", `Sample point (${x}, ${y}) is outside the ${w}x${h} canvas`);
+  return { r: Math.round(r / n), g: Math.round(g / n), b: Math.round(b / n) };
+}
+
+// Distance = max |channel difference| to target. 255 when distance <= fuzz,
+// falling linearly to 0 at 2*fuzz (fuzz 0: exact matches only).
+function colorMask(rgb, w, h, target, fuzz, featherPx = 0, invert = false) {
+  const n = w * h;
+  const fill = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const dist = Math.max(
+      Math.abs(rgb[i * 3] - target.r),
+      Math.abs(rgb[i * 3 + 1] - target.g),
+      Math.abs(rgb[i * 3 + 2] - target.b),
+    );
+    if (dist <= fuzz) fill[i] = 255;
+    else if (dist < 2 * fuzz) fill[i] = (255 * (2 * fuzz - dist)) / fuzz;
+  }
+  return finishMask(fill, w, h, featherPx, invert);
+}
+
+const clamp01 = (t) => (t <= 0 ? 0 : t >= 1 ? 1 : t);
+
+// spec: {kind: "linear", from, to} | {kind: "radial", from, radius_px}, invert?
+// Pixels are sampled at their centres. Linear: 255 at from, 0 at to, linear
+// along the from->to vector and clamped beyond both ends. Radial: 255 at
+// from, 0 at radius_px, smoothstep in between.
+function gradientMask(w, h, spec) {
+  const { kind, from, to, radius_px: radius } = spec;
+  const out = new Uint8Array(w * h);
+  let valueAt;
+  if (kind === "linear") {
+    if (!to) throw codedError("INVALID_ARGS", "linear gradient needs to");
+    const vx = to.x - from.x;
+    const vy = to.y - from.y;
+    const len2 = vx * vx + vy * vy;
+    if (!(len2 > 0)) throw codedError("INVALID_ARGS", "linear gradient needs from and to to differ");
+    valueAt = (px, py) => 255 * (1 - clamp01(((px - from.x) * vx + (py - from.y) * vy) / len2));
+  } else if (kind === "radial") {
+    if (!(radius > 0)) throw codedError("INVALID_ARGS", "radial gradient needs radius_px > 0");
+    valueAt = (px, py) => {
+      const t = clamp01(Math.hypot(px - from.x, py - from.y) / radius);
+      return 255 * (1 - t * t * (3 - 2 * t));
+    };
+  } else {
+    throw codedError("INVALID_ARGS", `kind must be linear or radial, got ${kind}`);
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const v = clampByte(valueAt(x + 0.5, y + 0.5));
+      out[y * w + x] = spec.invert ? 255 - v : v;
+    }
+  }
+  return out;
+}
+
+// Percentage of mask pixels >= 128, one decimal.
+function coveragePct(buf) {
+  if (buf.length === 0) return 0;
+  let n = 0;
+  for (let i = 0; i < buf.length; i++) if (buf[i] >= 128) n++;
+  return Math.round((1000 * n) / buf.length) / 10;
+}
+
+// Mask bytes (one channel) -> chunky RGB with the channel tripled, for JPEG
+// encoding (encodeImageData needs RGB).
+function grayToRgb(gray) {
+  const out = new Uint8Array(gray.length * 3);
+  for (let i = 0; i < gray.length; i++) {
+    out[i * 3] = gray[i];
+    out[i * 3 + 1] = gray[i];
+    out[i * 3 + 2] = gray[i];
   }
   return out;
 }
@@ -161,4 +278,7 @@ function imageDataFromMask(ps, buf, w, h) {
   });
 }
 
-module.exports = { rasterizeStrokes, polygonMask, imageDataFromMask };
+module.exports = {
+  rasterizeStrokes, polygonMask, imageDataFromMask, finishMask, lumaOf, luminanceMask,
+  sampleMean, colorMask, gradientMask, coveragePct, grayToRgb,
+};

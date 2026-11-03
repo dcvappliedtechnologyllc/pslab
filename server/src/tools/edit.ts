@@ -17,6 +17,18 @@ const slider = z.number().min(-100).max(100).optional();
 // which the Anthropic API rejects and the whole tool is then dropped.
 const curve = z.array(z.array(z.number().min(0).max(255)).length(2)).min(2).optional();
 
+const level = z.number().int().min(0).max(255).optional();
+const levelsChannel = z
+  .object({
+    in_black: level.describe("Input black point, default 0"),
+    in_white: level.describe("Input white point, default 255"),
+    gamma: z.number().min(0.1).max(9.99).optional().describe("Midtone gamma, default 1"),
+    out_black: level.describe("Output black, default 0"),
+    out_white: level.describe("Output white, default 255"),
+  })
+  .strict()
+  .optional();
+
 const params = z
   .object({
     exposure: z.number().min(-5).max(5).optional(),
@@ -37,6 +49,10 @@ const params = z
     offset: z.number().min(-0.5).max(0.5).optional(),
     gamma: z.number().min(0.01).max(9.99).optional(),
     points: z.object({ rgb: curve, red: curve, green: curve, blue: curve }).strict().optional(),
+    rgb: levelsChannel,
+    red: levelsChannel,
+    green: levelsChannel,
+    blue: levelsChannel,
   })
   .strict();
 
@@ -48,10 +64,31 @@ const PARAMS_BY_TYPE = {
   clarity_dehaze: ["clarity", "dehaze"],
   exposure: ["exposure", "offset", "gamma"],
   brightness_contrast: ["brightness", "contrast"],
+  levels: ["rgb", "red", "green", "blue"],
 } as const;
 
 type AdjustmentType = keyof typeof PARAMS_BY_TYPE;
 const TYPES = Object.keys(PARAMS_BY_TYPE) as [AdjustmentType, ...AdjustmentType[]];
+
+// A message when params hold keys that do not belong to type, else null.
+function paramsProblem(type: AdjustmentType, given: Record<string, unknown> | undefined): string | null {
+  const allowed: readonly string[] = PARAMS_BY_TYPE[type];
+  const extra = Object.keys(given ?? {}).filter((k) => !allowed.includes(k));
+  if (extra.length > 0) return `params ${extra.join(", ")} do not apply to ${type}; it takes ${allowed.join(", ")}`;
+  if (type === "levels") {
+    for (const ch of ["rgb", "red", "green", "blue"]) {
+      const v = (given ?? {})[ch] as { in_black?: number; in_white?: number; out_black?: number; out_white?: number } | undefined;
+      if (!v) continue;
+      const inB = v.in_black ?? 0;
+      const inW = v.in_white ?? 255;
+      const outB = v.out_black ?? 0;
+      const outW = v.out_white ?? 255;
+      if (!(inB < inW)) return `levels ${ch}: in_black (${inB}) must be below in_white (${inW})`;
+      if (!(outB <= outW)) return `levels ${ch}: out_black (${outB}) must not exceed out_white (${outW})`;
+    }
+  }
+  return null;
+}
 
 const stroke = z.object({
   points: z.array(point).min(1).describe("Stroke path in image pixels"),
@@ -83,7 +120,10 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
         "color_vibrance: vibrance, saturation, temperature, tint; " +
         "clarity_dehaze: clarity, dehaze; " +
         "exposure: exposure (-5..5), offset (-0.5..0.5), gamma (0.01..9.99, default 1); " +
-        "brightness_contrast: brightness, contrast. " +
+        "brightness_contrast: brightness, contrast; " +
+        "levels: per channel {rgb|red|green|blue: {in_black, in_white, gamma, out_black, out_white}}, integers 0..255 " +
+        "(defaults 0, 255, 0, 255) and gamma 0.1..9.99 (default 1), in_black below in_white, out_black at most out_white; " +
+        "lowering one channel's in_white brightens that channel (e.g. green/blue in_white < 255 removes a warm cast). " +
         "above puts the new layer directly above that layer; clip_to clips it to that layer (and places it above it). " +
         "light may come back as a group holding Exposure and Curves layers (the returned layer_id is the group); that fallback, " +
         "used when the recorded descriptor is absent, ignores whites and blacks. " +
@@ -98,14 +138,64 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
       },
     },
     async (args) => {
-      const allowed: readonly string[] = PARAMS_BY_TYPE[args.type];
-      const extra = Object.keys(args.params ?? {}).filter((k) => !allowed.includes(k));
-      if (extra.length > 0) {
-        return toolError(
-          `params ${extra.join(", ")} do not apply to ${args.type}; it takes ${allowed.join(", ")}`,
-        );
-      }
+      const problem = paramsProblem(args.type, args.params);
+      if (problem) return toolError(problem);
       return forward(bridge, "add_adjustment")(args);
+    },
+  );
+
+  server.registerTool(
+    "set_adjustment",
+    {
+      description:
+        "Change the values of an existing adjustment layer in place (one undoable history step), instead of stacking a new one. " +
+        "type must match the layer (light, curves, hue_sat, exposure, brightness_contrast, color_vibrance, clarity_dehaze, levels); " +
+        "params are the same as add_adjustment's for that type, and replace the layer's values: params left out go back to their " +
+        "defaults (0, gamma 1, identity curve or levels). Errors: NOT_ADJUSTMENT for a pixel layer, group or smart object; " +
+        "TYPE_MISMATCH when type is not the layer's kind (get_document shows it: light, curves, hueSaturation, exposure, " +
+        "brightnessContrast, vibrance, clarity, levels). The active document is unchanged afterwards. Returns {ok, applied}.",
+      inputSchema: {
+        doc: docArg,
+        layer: layerId,
+        type: z.enum(TYPES),
+        params: params.default({}).describe("New values for the layer's type; see add_adjustment"),
+      },
+    },
+    async (args) => {
+      const problem = paramsProblem(args.type, args.params);
+      if (problem) return toolError(problem);
+      return forward(bridge, "set_adjustment")(args);
+    },
+  );
+
+  server.registerTool(
+    "white_balance",
+    {
+      description:
+        "Neutralise a colour cast from a patch that should be neutral. bbox is a box in image pixels around a grey or white " +
+        "surface in the photo (a white wall, marble, a grey card), not a light source or a coloured object. RGB documents only. " +
+        "The patch's mean RGB is measured on the Background layer's own pixels; a Levels layer is then added directly above " +
+        "the Background layer (above the bottom-most layer when there is no Background), so it corrects the photo but not " +
+        "pasted or retouched layers above it. It lifts the weaker channels (per-channel input white point) to match the " +
+        "brightest, so nothing clips. strength (0 < strength <= 1, default 1) scales the whole correction. keep_warmth " +
+        "(0..1, default 0) keeps part of a warm cast: it holds back only the red-blue (temperature) part of the correction, " +
+        "e.g. keep_warmth 0.5 keeps half the red-blue gap; green (tint) is always fully corrected, and a cool cast ignores it. " +
+        "Any selection is cleared first. One undoable history step (the Levels layer, named name, default \"White balance\"); " +
+        "the active document is unchanged afterwards. Returns levels {red, green, blue} (the in_white used per channel), " +
+        "before (Background patch mean) and after (composite patch mean, null if the re-measure failed) {r, g, b}, and " +
+        "layer_id; tweak it later with set_adjustment type levels.",
+      inputSchema: {
+        doc: docArg,
+        bbox: box.describe("Neutral grey/white patch in image pixels"),
+        strength: z.number().gt(0).max(1).default(1).describe("Above 0 up to 1 (full neutralisation)"),
+        keep_warmth: z.number().min(0).max(1).default(0).describe("Share of the red-blue gap to keep: 0 = fully neutral"),
+        name: z.string().min(1).default("White balance").describe("Name for the Levels layer"),
+      },
+    },
+    async (args) => {
+      const { left, top, right, bottom } = args.bbox;
+      if (!(left < right && top < bottom)) return toolError("bbox must have left < right and top < bottom");
+      return forward(bridge, "white_balance")(args);
     },
   );
 
@@ -173,6 +263,26 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
       },
     },
     forward(bridge, "paint_mask"),
+  );
+
+  server.registerTool(
+    "delete_layer",
+    {
+      description:
+        "Delete one layer (adjustment, pixel, group with its contents, smart object) from doc (default the active document). " +
+        "Requires confirm: true, or the tool refuses and does nothing. The Background layer is never deleted (PROTECTED_LAYER). " +
+        "The active document is unchanged afterwards. One undoable history step; returns the deleted layer's id and name, " +
+        "and the updated layer tree in doc.",
+      inputSchema: {
+        doc: docArg,
+        layer: layerId,
+        confirm: z.boolean().optional().describe("Must be true, or the tool refuses and does nothing"),
+      },
+    },
+    async (args) => {
+      if (args.confirm !== true) return toolError("Set confirm: true to delete_layer.");
+      return forward(bridge, "delete_layer")(args);
+    },
   );
 
   server.registerTool(

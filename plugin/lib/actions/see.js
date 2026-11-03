@@ -104,4 +104,4 @@ async function open_document(ps, args = {}) {
   };
 }
 
-module.exports = { get_document, open_document, render_preview, region_stats };
+module.exports = { get_document, open_document, render_preview, region_stats, readPixels };

@@ -193,3 +193,32 @@ nothing saved.
   The note's "exposure reports brightnessContrast" claim was wrong: that layer was a Light
   layer named "Test exposure". Hidden test layers remain in the test documents; pslab has no
   delete-layer tool by design.
+
+## 2026-11-02 v0.2 P1 — mask tools: built, not yet live-verified
+- New plugin module `plugin/lib/actions/masks.js` and server `server/src/tools/masks.ts`
+  (`registerMaskTools`): `mask_from_luminance`, `mask_gradient`, `mask_from_color`,
+  `preview_mask`. Pure helpers in `plugin/lib/raster.js` (`luminanceMask`, `gradientMask`,
+  `colorMask`, `sampleMean`, `coveragePct`, `grayToRgb`, shared `finishMask` feather).
+- Built and unit-tested against the stub `ps` only; none of the four has run in Photoshop yet.
+- To check live: full-resolution `getPixels` on a large document (banded read above
+  100 MB), `getLayerMask` with `targetSize` (preview_mask also passes full-canvas
+  `sourceBounds` so `scale` is canvas width / preview width), `createImageDataFromBuffer`
+  with `components: 3, colorSpace: "RGB"` and no `colorProfile`, and `putLayerMask` creating
+  a mask on a layer that has none (same path as `paint_mask`).
+- `mask_from_color` with `sample` uses two modal scopes: a read-only one for the 5x5 mean
+  (so the history state can be named with the colour), then the history step.
+- Review rulings (2026-11-02): the two-scope sample read in `mask_from_color` is accepted (the
+  history name carries the sampled colour); `coverage_pct` is measured after feather and invert
+  (the share the mask reveals); full-canvas `sourceBounds` in `preview_mask` stays pending the
+  live check.
+- Review fix: `luminanceMask` snaps L to 1e-6 before comparing, since the Rec. 709 weights put
+  67 of the 256 neutral greys just below their integer (white was 254.99999999999997, so
+  `min_l: 255` returned an empty mask).
+## 2026-11-02 v0.2 P0
+
+- `delete_layer`: built, not yet live-verified.
+- `set_adjustment`: built, not yet live-verified.
+- `add_adjustment` / `set_adjustment` type `levels`: built, not yet live-verified.
+- `white_balance`: built, not yet live-verified.
+- Review fixes (same day): `set_adjustment` curves/levels sets always carry all four channels (identity for the ones left out); exposure set carries `presetKindCustom`. **Live-check needed:** `set_adjustment` type `brightness_contrast` sends the plain payload (`brightness`, `center`, `useLegacy: false`, no `brightnessMode`); confirm against a real legacy Brightness/Contrast layer that it edits in place and does not switch the layer to Light mode.
+- `white_balance` now anchors its Levels layer directly above the Background (else the bottom-most layer), measures "before" on the Background's own pixels, clears any selection first, and returns `after: null` if the re-measure fails. Built, not yet live-verified.

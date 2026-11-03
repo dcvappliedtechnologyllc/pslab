@@ -49,12 +49,24 @@ Note: a Light adjustment layer reports kind `light` (pslab reads Photoshop's bri
 
 | Tool | Purpose |
 | --- | --- |
-| `add_adjustment` | Add an adjustment layer: `light`, `curves`, `hue_sat`, `exposure`, `brightness_contrast`, `color_vibrance`, `clarity_dehaze` |
+| `add_adjustment` | Add an adjustment layer: `light`, `curves`, `hue_sat`, `exposure`, `brightness_contrast`, `color_vibrance`, `clarity_dehaze`, `levels` (per-channel black/white/gamma) |
+| `set_adjustment` | Change an existing adjustment layer's values in place (same types and params as `add_adjustment`) |
+| `white_balance` | Neutralise a colour cast from a grey/white patch with a per-channel Levels layer placed directly above the Background; `keep_warmth` keeps part of the red-blue gap; returns before/after means |
 | `add_pixel_layer` | Add an empty named pixel layer |
 | `mask_from_polygon` | Replace a layer's mask with a feathered polygon (optionally inverted) |
 | `mask_from_subject` | Add a mask from Select Subject or Object Selection inside a box |
 | `paint_mask` | Paint white or black brush strokes onto a layer's mask |
 | `set_layer` | Change opacity, blend mode, visibility, name, or invert the mask |
+| `delete_layer` | Delete one layer; needs `confirm: true`; never deletes the Background layer |
+
+### Masks
+
+| Tool | Purpose |
+| --- | --- |
+| `mask_from_luminance` | Replace a layer's mask with a luminance range of the composite (`min_l..max_l`), feathered, optionally inverted; returns `coverage_pct` |
+| `mask_gradient` | Replace a layer's mask with a linear (`from` white to `to` black) or radial (smoothstep to `radius_px`) gradient |
+| `mask_from_color` | Replace a layer's mask with a colour range (sampled 5x5 mean or given `rgb`, `fuzziness`), feathered, optionally inverted; returns `coverage_pct`, `sampled_rgb` |
+| `preview_mask` | Read-only downscaled JPEG of a layer's mask (white = revealed) with `scale`; `has_mask: false` and no image when the layer has none |
 
 ### Composite
 
@@ -78,9 +90,9 @@ Developer tool: `dev_events` returns recorded Photoshop events for discovering b
 
 ## Safety
 
-- `crop`, `export` and `save` do nothing unless called with `confirm: true`.
+- `crop`, `export`, `save` and `delete_layer` do nothing unless called with `confirm: true`.
 - Every tool call is one undo step in Photoshop.
-- There is no flatten, delete-layer or close-document tool.
+- `delete_layer` refuses the Background layer (`PROTECTED_LAYER`). There is no flatten or close-document tool.
 - `export` works on a temporary copy; the open document is untouched. It overwrites a file with the same name.
 - Exports go to `~/Documents/pslab-exports/<shoot>/<filename>`, where `<shoot>` is the name of the source file's folder, used as the export subfolder. Set `PSLAB_EXPORT_ROOT` to change the root.
 

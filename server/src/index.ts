@@ -6,6 +6,7 @@ import { registerDevTools } from "./tools/dev.js";
 import { registerEditTools } from "./tools/edit.js";
 import { registerCompositeTools } from "./tools/composite.js";
 import { registerOutputTools } from "./tools/output.js";
+import { registerMaskTools } from "./tools/masks.js";
 
 // stdout is the MCP protocol channel: log to stderr only.
 async function main(): Promise<void> {
@@ -32,6 +33,7 @@ async function main(): Promise<void> {
   registerEditTools(server, bridge);
   registerCompositeTools(server, bridge);
   registerOutputTools(server, bridge);
+  registerMaskTools(server, bridge);
 
   let shuttingDown = false;
   const shutdown = (why: string): void => {
