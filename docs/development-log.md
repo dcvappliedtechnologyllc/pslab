@@ -397,3 +397,6 @@ Tool loads), server via `scripts/dev-harness.mjs`. Docs: IMG_0040.JPG (133) and 
   message) and rolled back cleanly (dst unchanged). Replaced by the DOM `layer.bringToFront()`
   (fallback `layer.move(top, ElementPlacement.PLACEBEFORE)`), skipped when the copy already
   lands on top. Re-test after reload: see below.
+- After the reload: `copy_layers_to src_doc:59 dst_doc:137 layers:[2,3]` → layer_ids [5, 6]
+  ("WB neutralize", "Light 1"), both on top of the Straightened smart object in source order,
+  masks kept (`hasMask: true`), one history state in 137. All ten P2–P4 items are live-verified.
