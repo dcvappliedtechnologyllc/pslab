@@ -346,7 +346,7 @@ Stub-tested only (plugin node tests + server vitest). Nothing below has run in P
 
 Photoshop 27.11.0, plugin loaded from main 42be8b0 (P0 + P1), server from feat/v02-p2-p4 via
 `scripts/dev-harness.mjs` (now registers the masks, geometry and workflow tool groups too).
-Fresh photo: `Office & Spa Stills/IMG_0040.JPG` (3368×6000, sRGB, doc 120), tiled shower wall
+Fresh photo: a fresh camera JPG (test photo F) (3368×6000, sRGB, doc 120), tiled shower wall
 with three white dispensers, warm cast.
 
 1. `white_balance bbox` on the middle dispenser body (1440,3120)–(1860,3600), keep_warmth 0.3 →
