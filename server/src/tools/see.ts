@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PluginBridge } from "../bridge.js";
-import { toolError, toolResult } from "./common.js";
+import { toolError, toolResult, hints } from "./common.js";
 import { DocSummarySchema } from "../protocol.js";
 
 const box = z.object({ left: z.number(), top: z.number(), right: z.number(), bottom: z.number() });
@@ -17,6 +17,7 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
   server.registerTool(
     "get_document",
     {
+      annotations: hints.read,
       description:
         "Document summary (size, ppi, profile, bits, layer tree with ids) in doc, plus the list of open documents in " +
         "result.open_docs. Pass doc to target a document other than the active one. All coordinates everywhere are image pixels.",
@@ -39,6 +40,7 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
   server.registerTool(
     "render_preview",
     {
+      annotations: hints.read,
       description:
         "Downscaled JPEG preview of the document (or a region). Returns scale = image pixels per preview pixel; multiply preview coordinates by scale to get image pixels. Default long edge 1500 px; request a region at full resolution only for edge work.",
       inputSchema: {
@@ -69,6 +71,7 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
   server.registerTool(
     "open_document",
     {
+      annotations: hints.open,
       description:
         "Open an image file from disk as a new Photoshop document (absolute path; JPG, HEIC, PNG, PSD, TIFF). " +
         "Returns the new document's summary in doc and the open documents in result.open_docs. The new document becomes active.",
@@ -90,6 +93,7 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
   server.registerTool(
     "region_stats",
     {
+      annotations: hints.read,
       description:
         "Mean RGB and luminance, 32-bin luminance histogram, and percentage of clipped highlights (L>=250) and shadows (L<=5) for a bbox in image pixels, on the composite or one layer.",
       inputSchema: {

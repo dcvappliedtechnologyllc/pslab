@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PluginBridge } from "../bridge.js";
-import { toolError, toolResult } from "./common.js";
+import { toolError, toolResult, hints } from "./common.js";
 
 type MaskPreviewResult =
   | { has_mask: false }
@@ -32,6 +32,7 @@ export function registerMaskTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "mask_from_luminance",
     {
+      annotations: hints.add,
       description:
         "Replace a layer's mask with a luminosity range of the composite image: white where min_l <= L <= max_l " +
         "(L = 0.2126 R + 0.7152 G + 0.0722 B, 0..255), black elsewhere; feather_px softens the edge, invert swaps. " +
@@ -55,6 +56,7 @@ export function registerMaskTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "mask_gradient",
     {
+      annotations: hints.add,
       description:
         "Replace a layer's mask with a gradient. linear: white at from, black at to, a straight ramp along from->to and " +
         "flat beyond both ends (to is required). radial: white at from, black at radius_px from it, smooth (smoothstep) " +
@@ -83,6 +85,7 @@ export function registerMaskTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "mask_from_color",
     {
+      annotations: hints.add,
       description:
         "Replace a layer's mask with a colour range of the composite image. Give exactly one of sample (a point in image " +
         "pixels; the 5x5 mean around it is used) or rgb. The mask is white where every channel is within fuzziness of " +
@@ -110,6 +113,7 @@ export function registerMaskTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "preview_mask",
     {
+      annotations: hints.read,
       description:
         "Show a layer's mask as a downscaled greyscale JPEG: white = revealed, black = hidden. Read-only. Returns " +
         "scale = image pixels per preview pixel (multiply preview coordinates by scale to get image pixels) and " +

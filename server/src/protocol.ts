@@ -61,7 +61,7 @@ export const RequestFrame = z.object({
   type: z.literal("request"),
   id: z.string(),
   action: z.string(),
-  args: z.record(z.unknown()),
+  args: z.record(z.string(), z.unknown()),
 });
 
 const OkResponse = z
