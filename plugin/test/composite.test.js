@@ -774,3 +774,70 @@ test("copy_to releases a copy that became clipped by the move", async () => {
   await placeAbove(ps, ps.dst, pasted, 20);
   assert.equal(pasted.isClippingMask, false);
 });
+
+// ---------- set_blur ----------
+
+const gauss = (r) => ({ _obj: "filterFX", enabled: true, filter: { _obj: "gaussianBlur", radius: { _unit: "pixelsUnit", _value: r } } });
+const otherFx = { _obj: "filterFX", enabled: true, filter: { _obj: "unsharpMask" } };
+
+// The finish stub with `get smartObject` answering filterFX = list.
+function blurStub(list, { kind = "smartObject" } = {}) {
+  const ps = makeFinishStub({ kind, otherActive: true });
+  const play = ps.action.batchPlay;
+  ps.action.batchPlay = async (descs) => {
+    if (descs[0]._obj === "get") {
+      ps.calls.push(["batchPlay", descs]);
+      const prop = descs[0]._target[0]._property;
+      if (prop === "smartObject") return [list === null ? {} : { smartObject: { _obj: "smartObject", filterFX: list } }];
+      return [{}];
+    }
+    return play(descs);
+  };
+  return ps;
+}
+
+test("set_blur edits the top-most Gaussian Blur smart filter with the recorded set, one step", async () => {
+  const ps = blurStub([gauss(4), otherFx, gauss(10)]);
+  const res = await composite.set_blur(ps, { doc: 7, layer: 30, radius_px: 4 });
+  assert.deepEqual(res, { ok: true, layer_id: 30, radius_px: 4, filter_index: 3, gaussian_blurs: 2 });
+  assert.deepEqual(suspends(ps), [{ documentID: 7, name: "Claude: set_blur, 4 px" }]);
+  assert.deepEqual(finishDescs(ps), [
+    D.selectLayerById(30),
+    {
+      _obj: "set",
+      _target: [{ _ref: "filterFX", _index: 3 }, { _ref: "layer", _enum: "ordinal", _value: "targetEnum" }],
+      filterFX: { _obj: "filterFX", filter: { _obj: "gaussianBlur", radius: { _unit: "pixelsUnit", _value: 4 } } },
+    },
+  ]);
+  assert.equal(ps.app.activeDocument, ps.other);
+});
+
+test("set_blur index picks a Gaussian Blur counted from the first applied", async () => {
+  const ps = blurStub([gauss(4), otherFx, gauss(10)]);
+  const res = await composite.set_blur(ps, { doc: 7, layer: 30, radius_px: 2.5, index: 1 });
+  assert.equal(res.filter_index, 1);
+  assert.equal(finishDescs(ps)[1]._target[0]._index, 1);
+  await assert.rejects(composite.set_blur(blurStub([gauss(4)]), { doc: 7, layer: 30, radius_px: 2, index: 2 }), { code: "INVALID_ARGS" });
+});
+
+test("set_blur answers NO_SMART_FILTER for a pixel layer or a smart object without a Gaussian Blur", async () => {
+  for (const ps of [blurStub([gauss(4)], { kind: "pixel" }), blurStub([otherFx]), blurStub(null), blurStub([])]) {
+    await assert.rejects(composite.set_blur(ps, { doc: 7, layer: 30, radius_px: 3 }), { code: "NO_SMART_FILTER" });
+    assert.equal(modalCount(ps), 0);
+  }
+});
+
+test("set_blur rejects bad radius/index and missing layers, and NOT_SUPPORTED without a recording", async () => {
+  const ps = blurStub([gauss(4)]);
+  for (const extra of [{ radius_px: 0 }, { radius_px: 251 }, { radius_px: 3, index: 0 }, { radius_px: 3, index: 1.5 }]) {
+    await assert.rejects(composite.set_blur(ps, { doc: 7, layer: 30, ...extra }), { code: "INVALID_ARGS" }, JSON.stringify(extra));
+  }
+  await assert.rejects(composite.set_blur(ps, { doc: 7, layer: 99, radius_px: 2 }), { code: "NO_LAYER" });
+  composite.setRecorded({ edit_smart_filter: null });
+  try {
+    await assert.rejects(composite.set_blur(ps, { doc: 7, layer: 30, radius_px: 2 }), { code: "NOT_SUPPORTED" });
+  } finally {
+    composite.setRecorded(null);
+  }
+  assert.equal(modalCount(ps), 0);
+});

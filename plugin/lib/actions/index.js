@@ -35,6 +35,7 @@ module.exports = {
   refine_edge: composite.refine_edge,
   match_tone: composite.match_tone,
   blur_layer: composite.blur_layer,
+  set_blur: composite.set_blur,
   crop: output.crop,
   export: output.export,
   save: output.save,

@@ -185,7 +185,7 @@ test("builders return fresh objects", () => {
 
 test("recorded map lists every type and is null for a module that is not there", () => {
   const recorded = require("../lib/recorded");
-  assert.deepEqual(Object.keys(recorded).sort(), ["clarity_dehaze", "clear_layer_style", "color_vibrance", "defringe", "drop_shadow", "gaussian_blur", "light", "shape_ellipse", "shape_rect"]);
+  assert.deepEqual(Object.keys(recorded).sort(), ["clarity_dehaze", "clear_layer_style", "color_vibrance", "defringe", "drop_shadow", "edit_smart_filter", "gaussian_blur", "light", "shape_ellipse", "shape_rect"]);
   const fs = require("node:fs");
   const path = require("node:path");
   for (const [type, value] of Object.entries(recorded)) {
