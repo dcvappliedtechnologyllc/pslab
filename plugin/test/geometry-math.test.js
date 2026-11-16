@@ -97,7 +97,7 @@ test("coversCanvas: the box reaches every canvas edge (optionally after a margin
   assert.equal(coversCanvas(null, 600, 400), false);
 });
 
-test("polygonCoversCanvas: true only when every canvas corner is inside or within the margin", () => {
+test("polygonCoversCanvas: true only when the (grown) polygon spans the canvas and fills 99.5% of it", () => {
   const rect = [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 400 }, { x: 0, y: 400 }];
   assert.equal(polygonCoversCanvas(rect, 600, 400), true);
   const inset = [{ x: 2, y: 2 }, { x: 598, y: 2 }, { x: 598, y: 398 }, { x: 2, y: 398 }];
@@ -107,4 +107,22 @@ test("polygonCoversCanvas: true only when every canvas corner is inside or withi
   assert.equal(polygonCoversCanvas(tri, 600, 400, 2), false);
   const big = [{ x: -100, y: -100 }, { x: 800, y: -100 }, { x: 800, y: 600 }, { x: -100, y: 600 }];
   assert.equal(polygonCoversCanvas(big, 600, 400), true);
+});
+
+test("polygonCoversCanvas: a C-shape with all four corners inside does not cover", () => {
+  const c = [
+    { x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 150 }, { x: 300, y: 150 },
+    { x: 300, y: 250 }, { x: 600, y: 250 }, { x: 600, y: 400 }, { x: 0, y: 400 },
+  ];
+  assert.equal(polygonCoversCanvas(c, 600, 400), false);
+  assert.equal(polygonCoversCanvas(c, 600, 400, 2), false);
+  // a hairline notch closes under the apron: still covers
+  const hair = [
+    { x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 199 }, { x: 590, y: 199 },
+    { x: 590, y: 201 }, { x: 600, y: 201 }, { x: 600, y: 400 }, { x: 0, y: 400 },
+  ];
+  assert.equal(polygonCoversCanvas(hair, 600, 400, 2), true);
+  // clockwise or counter-clockwise order gives the same answer
+  const rectCcw = [{ x: 0, y: 0 }, { x: 0, y: 400 }, { x: 600, y: 400 }, { x: 600, y: 0 }];
+  assert.equal(polygonCoversCanvas(rectCcw, 600, 400), true);
 });

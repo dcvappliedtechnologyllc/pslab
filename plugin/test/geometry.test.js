@@ -530,6 +530,25 @@ test("content_aware_fill refuses a region that (with its 2 px apron) covers the 
   assert.ok(allDescs(ps).some((d) => d._obj === "inverse"));
 });
 
+test("content_aware_fill polygon guard: an inset covering polygon is refused, a notched one (corners inside) runs", async () => {
+  // inset 1 px: with the 2 px apron it covers the canvas
+  const inset = [{ x: 1, y: 1 }, { x: 599, y: 1 }, { x: 599, y: 399 }, { x: 1, y: 399 }];
+  const refused = makeStub();
+  await assert.rejects(
+    geometry.content_aware_fill(refused, { doc: 1, polygon: inset, name: "x" }),
+    (e) => e.code === "INVALID_ARGS" && /whole canvas/.test(e.message),
+  );
+  assert.equal(modalCount(refused), 0);
+  // C-shape: all four corners inside, but a 100 px notch leaves pixels to sample
+  const notched = [
+    { x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 150 }, { x: 500, y: 150 },
+    { x: 500, y: 250 }, { x: 600, y: 250 }, { x: 600, y: 400 }, { x: 0, y: 400 },
+  ];
+  const ps = makeStub();
+  await geometry.content_aware_fill(ps, { doc: 1, polygon: notched, name: "C" });
+  assert.ok(allDescs(ps).some((d) => d._obj === "inverse"));
+});
+
 test("stamp_visible: one named step, stamp on top, renamed; returns layer_id and bounds", async () => {
   const ps = makeStub();
   const res = await geometry.stamp_visible(ps, { doc: 1, name: "Stamp" });

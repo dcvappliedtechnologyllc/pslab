@@ -153,36 +153,33 @@ function coversCanvas(b, w, h, margin = 0) {
   return b.left - margin <= 0 && b.top - margin <= 0 && b.right + margin >= w && b.bottom + margin >= h;
 }
 
-function insidePolygon(x, y, pts) {
-  let inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const a = pts[i];
-    const b = pts[j];
-    if ((a.y > y) !== (b.y > y) && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
-  }
-  return inside;
+function polygonArea(pts) {
+  let twice = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) twice += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
+  return Math.abs(twice) / 2;
 }
 
-function distToSegment(x, y, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const len2 = dx * dx + dy * dy;
-  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len2));
-  return Math.hypot(x - (a.x + t * dx), y - (a.y + t * dy));
+function polygonPerimeter(pts) {
+  let p = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) p += Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+  return p;
 }
 
-// Conservative: true when every canvas corner lies inside the polygon or
-// within margin of its outline (a polygon grown by margin then covers them).
+// Conservative: true only when the polygon grown by margin both spans the
+// canvas (its bounding box reaches every edge) and fills at least 99.5% of
+// it. The grown area is taken as area + perimeter * margin. A C-shape whose
+// corners all sit inside the polygon still leaves its notch to sample from.
 function polygonCoversCanvas(pts, w, h, margin = 0) {
   if (!Array.isArray(pts) || pts.length < 3) return false;
-  const corners = [[0, 0], [w, 0], [w, h], [0, h]];
-  return corners.every(([x, y]) => {
-    if (insidePolygon(x, y, pts)) return true;
-    for (let i = 0; i < pts.length; i++) {
-      if (distToSegment(x, y, pts[i], pts[(i + 1) % pts.length]) <= margin) return true;
-    }
-    return false;
-  });
+  const box = {
+    left: Math.min(...pts.map((p) => p.x)),
+    top: Math.min(...pts.map((p) => p.y)),
+    right: Math.max(...pts.map((p) => p.x)),
+    bottom: Math.max(...pts.map((p) => p.y)),
+  };
+  if (!coversCanvas(box, w, h, margin)) return false;
+  const grown = polygonArea(pts) + polygonPerimeter(pts) * margin;
+  return grown >= 0.995 * w * h;
 }
 
 module.exports = { estimateTilt, toGray, sobel, round1, coversCanvas, polygonCoversCanvas };
