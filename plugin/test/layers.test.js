@@ -348,6 +348,15 @@ test("transform_layer rotate only, moved centre", async () => {
   assert.equal(historyName(ps), "Claude: transform_layer, 100% -90° @ 100,400");
 });
 
+test("transform_layer that changes nothing (100%, 0°, centre within half a pixel) makes no step", async () => {
+  for (const args of [{ scale_pct: 100 }, { rotate_deg: 0, cx: 500.4, cy: 150 }, { scale_pct: 100, rotate_deg: 0, cy: 149.6 }]) {
+    const ps = makeStub();
+    const r = await layers.transform_layer(ps, { doc: 1, layer: 3, ...args });
+    assert.deepEqual(r, { layer_id: 3, bounds: { left: 300, top: 100, right: 700, bottom: 200 } }, JSON.stringify(args));
+    assert.equal(modalCount(ps), 0, JSON.stringify(args));
+  }
+});
+
 test("transform_layer refusals happen before any modal call", async () => {
   const cases = [
     [{ layer: 3 }, "INVALID_ARGS"],

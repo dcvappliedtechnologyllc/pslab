@@ -206,6 +206,7 @@ async function transform_layer(ps, args = {}) {
   const { dx, dy, cx, cy } = transformDelta(bounds, args);
   const scalePct = has(scale) ? scale : 100;
   const angleDeg = has(angle) ? angle : 0;
+  if (scalePct === 100 && angleDeg === 0 && dx === 0 && dy === 0) return { layer_id: layer.id, bounds };
   const name = `Claude: transform_layer, ${fmt(scalePct)}% ${fmt(angleDeg)}° @ ${fmt(cx)},${fmt(cy)}`;
   return stepIn(ps, name, d, async () => {
     await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct, angleDeg, dx, dy })]);
