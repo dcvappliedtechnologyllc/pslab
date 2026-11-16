@@ -132,16 +132,16 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
       annotations: hints.set,
       description:
         "Change the radius of a Gaussian Blur smart filter that blur_layer added, in place (no second filter, no " +
-        "re-wrapping), on a smart object layer in doc. radius_px 0.1..250. With several Gaussian Blur smart filters, " +
-        "index picks one, counted from the first applied (1 = bottom of the Smart Filters list); default the " +
-        "top-most. NO_SMART_FILTER when the layer is not a smart object or has no Gaussian Blur smart filter (use " +
+        "re-wrapping), on a smart object layer in doc. radius_px 0.1..250. index picks a Gaussian Blur counted from " +
+        "the bottom of the Smart Filters list (1 = the first applied); it is required when the layer has more than " +
+        "one (INVALID_ARGS otherwise) and may be left out when there is one. NO_SMART_FILTER when the layer is not a smart object or has no Gaussian Blur smart filter (use " +
         "blur_layer first). Returns layer_id, radius_px, filter_index and gaussian_blurs (how many there are). One " +
         "undoable history step.",
       inputSchema: {
         doc: z.number().int().optional().describe("Document id; defaults to the active document"),
         layer: z.number().int().describe("Layer id of the smart object"),
         radius_px: z.number().min(0.1).max(250).describe("New blur radius in pixels, 0.1..250"),
-        index: z.number().int().min(1).optional().describe("Which Gaussian Blur, 1 = first applied; default the top-most"),
+        index: z.number().int().min(1).optional().describe("Which Gaussian Blur, counted from the bottom (1 = first applied); required when there are several"),
       },
     },
     forward(bridge, "set_blur"),

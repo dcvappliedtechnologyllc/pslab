@@ -143,6 +143,8 @@ describe("composite tools over MCP", () => {
     expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
     expect(t.description).toContain("NO_SMART_FILTER");
     expect(t.description).toContain("blur_layer");
+    expect(t.description).toContain("counted from the bottom");
+    expect(t.description).toContain("required when the layer has more than one");
   });
 
   it("refine_edge rejects a negative contract without calling the plugin", async () => {

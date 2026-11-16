@@ -796,20 +796,33 @@ function blurStub(list, { kind = "smartObject" } = {}) {
   return ps;
 }
 
-test("set_blur edits the top-most Gaussian Blur smart filter with the recorded set, one step", async () => {
-  const ps = blurStub([gauss(4), otherFx, gauss(10)]);
+test("set_blur edits the only Gaussian Blur smart filter with the recorded set, one step", async () => {
+  const ps = blurStub([otherFx, gauss(10)]);
   const res = await composite.set_blur(ps, { doc: 7, layer: 30, radius_px: 4 });
-  assert.deepEqual(res, { ok: true, layer_id: 30, radius_px: 4, filter_index: 3, gaussian_blurs: 2 });
+  assert.deepEqual(res, { ok: true, layer_id: 30, radius_px: 4, filter_index: 2, gaussian_blurs: 1 });
   assert.deepEqual(suspends(ps), [{ documentID: 7, name: "Claude: set_blur, 4 px" }]);
   assert.deepEqual(finishDescs(ps), [
     D.selectLayerById(30),
     {
       _obj: "set",
-      _target: [{ _ref: "filterFX", _index: 3 }, { _ref: "layer", _enum: "ordinal", _value: "targetEnum" }],
+      _target: [{ _ref: "filterFX", _index: 2 }, { _ref: "layer", _enum: "ordinal", _value: "targetEnum" }],
       filterFX: { _obj: "filterFX", filter: { _obj: "gaussianBlur", radius: { _unit: "pixelsUnit", _value: 4 } } },
     },
   ]);
   assert.equal(ps.app.activeDocument, ps.other);
+});
+
+test("set_blur refuses to guess among several Gaussian Blurs without index", async () => {
+  const ps = blurStub([gauss(4), otherFx, gauss(10)]);
+  await assert.rejects(composite.set_blur(ps, { doc: 7, layer: 30, radius_px: 4 }), (e) => {
+    assert.equal(e.code, "INVALID_ARGS");
+    assert.match(e.message, /index/);
+    assert.match(e.message, /2 Gaussian Blur/);
+    return true;
+  });
+  assert.equal(modalCount(ps), 0);
+  const res = await composite.set_blur(ps, { doc: 7, layer: 30, radius_px: 4, index: 2 });
+  assert.deepEqual(res, { ok: true, layer_id: 30, radius_px: 4, filter_index: 3, gaussian_blurs: 2 });
 });
 
 test("set_blur index picks a Gaussian Blur counted from the first applied", async () => {

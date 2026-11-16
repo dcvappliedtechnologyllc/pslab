@@ -497,7 +497,16 @@ async function set_blur(ps, args = {}) {
   if (index !== undefined && index !== null && index > positions.length) {
     throw invalidArgs(`index ${index}: layer ${layer.id} has ${positions.length} Gaussian Blur smart filter(s)`);
   }
-  const at = index !== undefined && index !== null ? positions[index - 1] : positions[positions.length - 1];
+  // which end of filterFX is the top of the Smart Filters list is unverified,
+  // so with several Gaussian Blurs the caller must pick one
+  const hasIndex = index !== undefined && index !== null;
+  if (!hasIndex && positions.length > 1) {
+    throw invalidArgs(
+      `layer ${layer.id} has ${positions.length} Gaussian Blur smart filters; give index (1 = the first applied, ` +
+        "counted from the bottom of the Smart Filters list)",
+    );
+  }
+  const at = hasIndex ? positions[index - 1] : positions[0];
   const rec = recordedMap().edit_smart_filter;
   if (!rec || rec.unsupported) throw codedError("NOT_SUPPORTED", "set_blur needs a recorded descriptor, and none is available");
   const [desc] = applyParams(rec, { index: at, radius_px: r });
