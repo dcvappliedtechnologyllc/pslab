@@ -247,6 +247,7 @@ async function align_layers(ps, args = {}) {
   if ((to === "layer") !== given(args.to_layer)) throw invalid('Give to_layer exactly when to is "layer"');
   const { d } = resolveDoc(ps, args.doc);
   const { live, skipped } = moveTargets(d, args.layers);
+  if (live.length === 0) return { moved: [], skipped };
   const { box, label } = alignTarget(d, args);
   const asGroup = args.as_group === true;
   const deltas = alignDeltas(live.map((t) => t.bounds), box, { horizontal, vertical }, asGroup);

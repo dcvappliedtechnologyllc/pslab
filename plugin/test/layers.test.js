@@ -420,6 +420,16 @@ test("align_layers already aligned makes no step", async () => {
   assert.equal(r.moved.length, 2);
 });
 
+test("align_layers with only empty layers returns moved [] before reading the target, no step", async () => {
+  for (const extra of [{ as_group: true }, { to: "selection" }]) {
+    const ps = makeStub();
+    ps.doc.selection = { bounds: null }; // the target is never read: nothing would move
+    const r = await layers.align_layers(ps, { doc: 1, layers: [8], horizontal: "left", ...extra });
+    assert.deepEqual(r, { moved: [], skipped: [{ id: 8, name: "Vignette" }] }, JSON.stringify(extra));
+    assert.equal(modalCount(ps), 0);
+  }
+});
+
 test("align_layers refusals happen before any modal call", async () => {
   const cases = [
     [{ layers: [4] }, "INVALID_ARGS"],
