@@ -182,22 +182,42 @@ function requireName(name) {
   if (typeof name !== "string" || name.length === 0) throw invalidArgs("name is required (a non-empty string)");
 }
 
+// A temporary empty pixel layer: with it showing, Stamp Visible has the two
+// visible layers it needs when only one layer is left to sample.
+const STAMP_HELPER = { _obj: "make", _target: [{ _ref: "layer" }], using: { _obj: "layer", name: "pslab stamp helper" } };
+
 // Stamp Visible with the top layer selected, so the composite lands on top of
-// the stack as a new pixel layer; renamed to `name`. Returns the layer.
-async function stampOnTop(ps, d, name) {
+// the stack as a new pixel layer; renamed to `name`. Returns the layer. pad:
+// only one layer shows, so a temporary empty layer is made on top first and
+// deleted after the stamp (the stamp is then selected again).
+async function stampOnTop(ps, d, name, { pad = false } = {}) {
   const top = Array.from(d.layers || [])[0];
   if (!top) throw codedError("NO_LAYER", "The document has no layers");
   let layer;
-  if (flatten(d.layers).length === 1) {
+  let temp = null;
+  if (!pad && flatten(d.layers).length === 1) {
     // Stamp Visible is unavailable when the document has a single layer (a
     // lone Background, say); a copy of that layer is the same composite.
     layer = await top.duplicate();
     if (layer) await bp(ps, [D.selectLayerById(layer.id)]);
+  } else if (pad) {
+    await bp(ps, [D.selectLayerById(top.id), STAMP_HELPER]);
+    temp = activeId(d);
+    await bp(ps, [D.stampVisible()]);
+    layer = findLayer(d, activeId(d));
   } else {
     await bp(ps, [D.selectLayerById(top.id), D.stampVisible()]);
     layer = findLayer(d, activeId(d));
   }
-  if (!layer || layer.id === top.id) throw codedError("NO_NEW_LAYER", "Stamp Visible did not make a new layer");
+  if (!layer || layer.id === top.id || layer.id === temp) {
+    throw codedError("NO_NEW_LAYER", "Stamp Visible did not make a new layer");
+  }
+  if (temp !== null) {
+    const helper = findLayer(d, temp);
+    if (helper) await helper.delete();
+    await bp(ps, [D.selectLayerById(layer.id)]);
+    layer = findLayer(d, layer.id) || layer;
+  }
   layer.name = name;
   // Stamped above a clipped top layer, the new layer joins its clipping group
   // and would only show where the layer below has pixels: release it.
@@ -214,9 +234,12 @@ const isPixelLayer = (layer) =>
   safe(() => layer.isBackgroundLayer, false) === true || String(safe(() => layer.kind, "")) === "pixel";
 
 // What content_aware_fill samples, checked before the step. null: everything
-// visible (sample "visible", or "below" without above). Otherwise {hide, sole}:
-// the visible layers to hide for the stamp, and the id of the one pixel layer
-// left showing when only one is (duplicated instead of Stamp Visible).
+// visible (sample "visible", or "below" without above). Otherwise {hide, sole,
+// pad}: the visible layers to hide for the stamp; sole, the id of the one
+// layer left showing when it is the Background (no opacity, blend, mask or
+// effects, so a duplicate is the composite); pad, when the one layer left is
+// any other pixel layer (a duplicate would keep its opacity, fill, blend,
+// mask and effects, so it is stamped beside a temporary empty layer).
 function samplePlan(d, args, hasAbove) {
   const sample = args.sample ?? "visible";
   if (!SAMPLES.includes(sample)) throw invalidArgs(`sample must be visible, below or layers, got ${sample}`);
@@ -239,14 +262,16 @@ function samplePlan(d, args, hasAbove) {
   if (leaves.length === 0) {
     throw invalidArgs("Nothing visible to sample: the layers to sample are hidden or empty; show them or pick others");
   }
-  return { hide, sole: leaves.length === 1 && isPixelLayer(leaves[0]) ? leaves[0].id : null };
+  const only = leaves.length === 1 ? leaves[0] : null;
+  const bg = only !== null && safe(() => only.isBackgroundLayer, false) === true;
+  return { hide, sole: bg ? only.id : null, pad: only !== null && !bg && isPixelLayer(only) };
 }
 
 // The stamp with only the sampled layers showing. Visibility is toggled inside
 // the caller's suspended step and always restored (finally), so the net change
-// is the new layer. With one pixel layer left, Stamp Visible is not used (it
-// needs more than one); that layer is duplicated, put on top unless toTop is
-// false (the caller places it), and selected for the fill.
+// is the new layer. With only the Background left, Stamp Visible is not used
+// (it needs more than one visible layer); the Background is duplicated, put on
+// top unless toTop is false (the caller places it), and selected for the fill.
 async function stampSampled(ps, d, name, plan, toTop) {
   const hidden = [];
   try {
@@ -257,7 +282,7 @@ async function stampSampled(ps, d, name, plan, toTop) {
         hidden.push(layer);
       }
     }
-    if (!plan.sole) return await stampOnTop(ps, d, name);
+    if (!plan.sole) return await stampOnTop(ps, d, name, { pad: plan.pad });
     const src = findLayer(d, plan.sole);
     const layer = src ? await src.duplicate() : null;
     if (!layer) throw codedError("NO_NEW_LAYER", "Duplicating the sampled layer did not make a new layer");

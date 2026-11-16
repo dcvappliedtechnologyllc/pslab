@@ -52,6 +52,10 @@ function makeStub({
         const i = doc.layers.indexOf(doc.layers.find((x) => x.id === rel.id));
         doc.layers.splice(placement === "placeBefore" ? i : i + 1, 0, this);
       },
+      async delete() {
+        calls.push(["deleteLayer", this.id]);
+        doc.layers.splice(doc.layers.indexOf(this), 1);
+      },
       async duplicate() {
         calls.push(["duplicate", this.id]);
         const l = makeLayer(doc, nextId++, `${this._name} copy`, this.bounds);
@@ -136,6 +140,12 @@ function makeStub({
             if (l) active.activeLayers = [l];
           }
           if (desc._obj === "newPlacedLayer") top.id = nextId++; // the smart object gets a new id
+          if (desc._obj === "make" && desc._target && desc._target[0]._ref === "layer") {
+            // a new empty pixel layer directly above the active one
+            const l = makeLayer(active, nextId++, desc.using.name, { left: 0, top: 0, right: 0, bottom: 0 });
+            active.layers.splice(active.layers.indexOf(top), 0, l);
+            active.activeLayers = [l];
+          }
           if (desc._obj === "mergeVisible") {
             const l = makeLayer(active, nextId++, "Layer 1", full);
             if (stampClipped) {
@@ -652,12 +662,28 @@ test("content_aware_fill sample below: hides what is above the anchor, duplicate
   assert.deepEqual(resumes(ps), [true]);
 });
 
-test("content_aware_fill sample layers: one listed pixel layer is duplicated and the patch goes on top", async () => {
+// The temporary empty layer that lets Stamp Visible run with one layer showing.
+const TEMP = { _obj: "make", _target: [{ _ref: "layer" }], using: { _obj: "layer", name: "pslab stamp helper" } };
+
+test("content_aware_fill sample layers: one listed non-Background layer is stamped beside a temporary empty layer, not duplicated", async () => {
+  // a duplicate would keep its 50% opacity (and blend, mask, effects); the stamp bakes them in
   const ps = withSampleLayers(makeStub());
-  await geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample: "layers", sample_layers: [2] });
+  ps.doc.layers.find((l) => l.id === 2).opacity = 50;
+  const res = await geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample: "layers", sample_layers: [2] });
+  assert.equal(ps.calls.some((c) => c[0] === "duplicate"), false);
+  const descs = allDescs(ps);
+  assert.deepEqual(descs.slice(0, 5), [D.selectLayerById(5), TEMP, D.stampVisible(), D.selectLayerById(101), D.selectRectangle(cafBbox)]);
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "deleteLayer"), [["deleteLayer", 100]]);
+  // the temporary layer is made and deleted while the others are hidden
+  const at = (pred) => ps.calls.findIndex(pred);
+  const hideAt = at((c) => c[0] === "visible" && c[2] === false);
+  const delAt = at((c) => c[0] === "deleteLayer");
+  const showAt = at((c) => c[0] === "visible" && c[2] === true);
+  assert.ok(hideAt < delAt && delAt < showAt);
   assert.deepEqual(visWrites(ps), [[5, false], [1, false], [5, true], [1, true]]);
-  assert.deepEqual(ps.calls.find((c) => c[0] === "duplicate"), ["duplicate", 2]);
-  assert.deepEqual(ps.doc.layers.map((l) => l.id), [100, 5, 2, 1]);
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [101, 5, 2, 1]);
+  assert.equal(res.layer_id, 101);
+  assert.deepEqual(resumes(ps), [true]);
 });
 
 test("content_aware_fill sample layers: several listed layers are stamped with the rest hidden", async () => {
