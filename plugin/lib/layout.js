@@ -37,4 +37,29 @@ function transformDelta(bounds, { cx, cy } = {}) {
   return { dx: tx - c.x + 0, dy: ty - c.y + 0, cx: tx, cy: ty };
 }
 
-module.exports = { unionBounds, moveDelta, transformDelta, centre, whole };
+// One axis: the shift that aligns [b0, b1] to [t0, t1] at start, center or end.
+function axisDelta(b0, b1, t0, t1, at) {
+  if (at === "start") return whole(t0 - b0);
+  if (at === "end") return whole(t1 - b1);
+  if (at === "center") return whole((t0 + t1) / 2 - (b0 + b1) / 2);
+  return 0;
+}
+const H = { left: "start", center: "center", right: "end" };
+const V = { top: "start", center: "center", bottom: "end" };
+
+// align_layers: one {dx, dy} per box. asGroup aligns the union of the boxes
+// and gives every box the same delta (keeps a title + bars block intact).
+function alignDeltas(boxes, target, { horizontal, vertical } = {}, asGroup = false) {
+  const delta = (b) => ({
+    dx: axisDelta(b.left, b.right, target.left, target.right, H[horizontal]),
+    dy: axisDelta(b.top, b.bottom, target.top, target.bottom, V[vertical]),
+  });
+  if (boxes.length === 0) return [];
+  if (asGroup) {
+    const one = delta(unionBounds(boxes));
+    return boxes.map(() => ({ ...one }));
+  }
+  return boxes.map(delta);
+}
+
+module.exports = { unionBounds, moveDelta, transformDelta, alignDeltas, centre, whole };

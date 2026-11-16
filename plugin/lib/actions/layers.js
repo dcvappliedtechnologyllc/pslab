@@ -3,8 +3,8 @@
 // history state; each change is one named step (stepIn).
 const D = require("../descriptors");
 const { runRead, bp } = require("../step");
-const { findLayer, resolveDoc, safe, layerBounds } = require("../doc");
-const { unionBounds, moveDelta, transformDelta } = require("../layout");
+const { findLayer, resolveDoc, safe, layerBounds, normBounds } = require("../doc");
+const { unionBounds, moveDelta, transformDelta, alignDeltas } = require("../layout");
 const { codedError, requireLayer, stepIn, isProtectedLayer } = require("./edit");
 const { requireAnchor, placeAbove, placeBelow, isDirectlyAbove, isDirectlyBelow, locate } = require("../place");
 
@@ -207,4 +207,49 @@ async function transform_layer(ps, args = {}) {
   });
 }
 
-module.exports = { select_layer, reorder_layer, move_layer, transform_layer };
+// ---------- align_layers ----------
+
+const HORIZONTAL = ["left", "center", "right"];
+const VERTICAL = ["top", "center", "bottom"];
+
+// The box align_layers aligns to, and its label for the history name.
+function alignTarget(d, args) {
+  const to = args.to ?? "canvas";
+  if (to === "canvas") {
+    return { box: { left: 0, top: 0, right: Number(d.width), bottom: Number(d.height) }, label: "canvas" };
+  }
+  if (to === "selection") {
+    const box = normBounds(safe(() => d.selection.bounds, null));
+    if (!box) throw codedError("NO_SELECTION", "There is no active selection to align to");
+    return { box, label: "selection" };
+  }
+  const layer = requireLayer(d, args.to_layer);
+  const box = layerBounds(layer);
+  if (!box) throw codedError("EMPTY_LAYER", `Layer ${layer.id} (${nameOf(layer)}) has no pixels to align to`);
+  return { box, label: nameOf(layer) };
+}
+
+async function align_layers(ps, args = {}) {
+  const { horizontal, vertical } = args;
+  if (!given(horizontal) && !given(vertical)) throw invalid("Give horizontal and/or vertical");
+  if (given(horizontal) && !HORIZONTAL.includes(horizontal)) throw invalid(`horizontal must be left, center or right, got ${horizontal}`);
+  if (given(vertical) && !VERTICAL.includes(vertical)) throw invalid(`vertical must be top, center or bottom, got ${vertical}`);
+  const to = args.to ?? "canvas";
+  if (!["canvas", "selection", "layer"].includes(to)) throw invalid(`to must be canvas, selection or layer, got ${to}`);
+  if ((to === "layer") !== given(args.to_layer)) throw invalid('Give to_layer exactly when to is "layer"');
+  const { d } = resolveDoc(ps, args.doc);
+  const { live, skipped } = moveTargets(d, args.layers);
+  const { box, label } = alignTarget(d, args);
+  const asGroup = args.as_group === true;
+  const deltas = alignDeltas(live.map((t) => t.bounds), box, { horizontal, vertical }, asGroup);
+  const report = () => live.map(({ layer }) => ({ id: layer.id, bounds: boundsNow(d, layer) }));
+  if (deltas.every((m) => m.dx === 0 && m.dy === 0)) return { moved: report(), skipped };
+  const how = [given(horizontal) && `h-${horizontal}`, given(vertical) && `v-${vertical}`].filter(Boolean).join(" ");
+  const name = `Claude: align_layers, ${plural(live.length)} ${how} to ${label}${asGroup ? " as group" : ""}`;
+  return stepIn(ps, name, d, async () => {
+    for (let i = 0; i < live.length; i++) await translateLayer(ps, live[i].layer, deltas[i].dx, deltas[i].dy);
+    return { moved: report(), skipped };
+  });
+}
+
+module.exports = { select_layer, reorder_layer, move_layer, transform_layer, align_layers };

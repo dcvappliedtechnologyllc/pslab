@@ -354,3 +354,59 @@ test("transform_layer refusals happen before any modal call", async () => {
     assert.equal(modalCount(ps), 0);
   }
 });
+
+// ---------- align_layers ----------
+
+test("align_layers as_group centres the block on the canvas without changing its shape", async () => {
+  const ps = makeStub();
+  ps.byId(3).boundsNoEffects = { left: 250, top: 100, right: 650, bottom: 200 };
+  const r = await layers.align_layers(ps, { doc: 1, layers: [3, 4, 5], horizontal: "center", as_group: true });
+  // union 250..650: centre 450 -> 500
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "translate"), [["translate", 3, 50, 0], ["translate", 4, 50, 0], ["translate", 5, 50, 0]]);
+  assert.equal(historyName(ps), "Claude: align_layers, 3 layers h-center to canvas as group");
+  assert.equal(r.moved.length, 3);
+  assert.deepEqual(r.skipped, []);
+});
+
+test("align_layers individually to a layer's left and top", async () => {
+  const ps = makeStub();
+  await layers.align_layers(ps, { doc: 1, layers: [4, 5], to: "layer", to_layer: 3, horizontal: "left", vertical: "top" });
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "translate"), [["translate", 4, -70, -120], ["translate", 5, -70, -140]]);
+  assert.equal(historyName(ps), "Claude: align_layers, 2 layers h-left v-top to Title");
+});
+
+test("align_layers to the selection uses its bounds; no selection is NO_SELECTION", async () => {
+  const ps = makeStub();
+  ps.doc.selection = { bounds: { left: 0, top: 0, right: 200, bottom: 100 } };
+  await layers.align_layers(ps, { doc: 1, layers: [4], to: "selection", vertical: "bottom" });
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "translate"), [["translate", 4, 0, -128]]);
+  const ps2 = makeStub();
+  ps2.doc.selection = { bounds: null };
+  await assert.rejects(layers.align_layers(ps2, { doc: 1, layers: [4], to: "selection", vertical: "bottom" }), { code: "NO_SELECTION" });
+  assert.equal(modalCount(ps2), 0);
+});
+
+test("align_layers already aligned makes no step", async () => {
+  const ps = makeStub();
+  const r = await layers.align_layers(ps, { doc: 1, layers: [4, 5], horizontal: "center" });
+  assert.equal(modalCount(ps), 0);
+  assert.equal(r.moved.length, 2);
+});
+
+test("align_layers refusals happen before any modal call", async () => {
+  const cases = [
+    [{ layers: [4] }, "INVALID_ARGS"],
+    [{ layers: [4], horizontal: "middle" }, "INVALID_ARGS"],
+    [{ layers: [4], horizontal: "left", to: "layer" }, "INVALID_ARGS"],
+    [{ layers: [4], horizontal: "left", to_layer: 3 }, "INVALID_ARGS"],
+    [{ layers: [4], horizontal: "left", to: "page" }, "INVALID_ARGS"],
+    [{ layers: [4], horizontal: "left", to: "layer", to_layer: 8 }, "EMPTY_LAYER"],
+    [{ layers: [4], horizontal: "left", to: "layer", to_layer: 404 }, "NO_LAYER"],
+    [{ layers: [1], horizontal: "left" }, "PROTECTED_LAYER"],
+  ];
+  for (const [args, code] of cases) {
+    const ps = makeStub();
+    await assert.rejects(layers.align_layers(ps, { doc: 1, ...args }), { code }, JSON.stringify(args));
+    assert.equal(modalCount(ps), 0);
+  }
+});

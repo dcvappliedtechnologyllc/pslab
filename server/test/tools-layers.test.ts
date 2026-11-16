@@ -134,4 +134,31 @@ describe("layer tools over MCP", () => {
     }
     expect(seen).toEqual([]);
   });
+
+  // ---------- align_layers ----------
+
+  it("align_layers forwards with defaults and is a set tool", async () => {
+    const res = await run("align_layers", { layers: [3, 4, 5], horizontal: "center", as_group: true });
+    expect(res.isError).toBeFalsy();
+    await run("align_layers", { layers: [4], to: "layer", to_layer: 3, vertical: "top" });
+    expect(seen).toEqual([
+      { action: "align_layers", args: { layers: [3, 4, 5], horizontal: "center", as_group: true, to: "canvas" } },
+      { action: "align_layers", args: { layers: [4], to: "layer", to_layer: 3, vertical: "top", as_group: false } },
+    ]);
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "align_layers")!;
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+    expect(t.description).toContain("as_group");
+    expect(t.description).toContain("NO_SELECTION");
+  });
+
+  it("align_layers refuses no direction and a mismatched to_layer before forwarding", async () => {
+    const none = await run("align_layers", { layers: [3] });
+    expect(textOf(none)).toBe("Give horizontal and/or vertical.");
+    const missing = await run("align_layers", { layers: [3], to: "layer", horizontal: "left" });
+    expect(textOf(missing)).toBe('Give to_layer exactly when to is "layer".');
+    const stray = await run("align_layers", { layers: [3], to_layer: 4, horizontal: "left" });
+    expect(textOf(stray)).toBe('Give to_layer exactly when to is "layer".');
+    expect(seen).toEqual([]);
+  });
 });

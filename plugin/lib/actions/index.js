@@ -50,4 +50,5 @@ module.exports = {
   reorder_layer: layers.reorder_layer,
   move_layer: layers.move_layer,
   transform_layer: layers.transform_layer,
+  align_layers: layers.align_layers,
 };

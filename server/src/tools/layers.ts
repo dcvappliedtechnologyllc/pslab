@@ -126,4 +126,34 @@ export function registerLayerTools(server: McpServer, bridge: PluginBridge): voi
       return call(bridge, "transform_layer", args);
     },
   );
+
+  server.registerTool(
+    "align_layers",
+    {
+      annotations: hints.set,
+      description:
+        "Align layers in doc by moving them (no Photoshop selection needed). horizontal: left | center | right; " +
+        "vertical: top | center | bottom; give at least one. to: canvas (default), selection (the active selection's " +
+        'bounds; NO_SELECTION if none) or layer (with to_layer, a layer id: align to that layer\'s bounds). ' +
+        "as_group: true moves the listed layers as one block, aligning their combined bounds (keeps a title and its " +
+        "bars in place relative to each other); false (default) aligns each layer on its own. Bounds ignore layer " +
+        "effects such as drop shadows. Offsets are whole pixels. The Background never moves (PROTECTED_LAYER); layers " +
+        "without pixels are listed in skipped. Returns moved: [{id, bounds}] and skipped. One undoable history step; " +
+        "already aligned makes none.",
+      inputSchema: {
+        doc: docArg,
+        layers: z.array(layerId).min(1).max(50).describe("Layer ids to align"),
+        to: z.enum(["canvas", "selection", "layer"]).default("canvas").describe("What to align to; default canvas"),
+        to_layer: layerId.optional().describe('Layer id to align to; required when to is "layer"'),
+        horizontal: z.enum(["left", "center", "right"]).optional(),
+        vertical: z.enum(["top", "center", "bottom"]).optional(),
+        as_group: z.boolean().default(false).describe("Align the layers' combined bounds as one block; default false"),
+      },
+    },
+    async (args) => {
+      if (!given(args.horizontal) && !given(args.vertical)) return toolError("Give horizontal and/or vertical.");
+      if ((args.to === "layer") !== given(args.to_layer)) return toolError('Give to_layer exactly when to is "layer".');
+      return call(bridge, "align_layers", args);
+    },
+  );
 }
