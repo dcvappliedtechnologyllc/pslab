@@ -419,6 +419,25 @@ test("set_layer_style keeps Use Global Light when no angle is given; an angle tu
   assert.deepEqual(ds.localLightingAngle, { _unit: "angleUnit", _value: 45 });
 });
 
+test("layer styles switch layer effects on (masterFXSwitch) when the shadow is enabled", async () => {
+  const off = { _obj: "layerEffects", scale: pct(100), masterFXSwitch: false, frameFX: STROKE, dropShadow: { ...CURRENT_SHADOW, enabled: false } };
+  let ps = makeStub({ gets: effectsGet({ 3: off }) });
+  await design.add_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow" });
+  assert.equal(styleSet(ps).to.masterFXSwitch, true, "add");
+  ps = makeStub({ gets: effectsGet({ 3: off }) });
+  await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", enabled: true });
+  assert.equal(styleSet(ps).to.masterFXSwitch, true, "set enabled true");
+  ps = makeStub({ gets: effectsGet({ 3: { ...off, dropShadow: CURRENT_SHADOW } }) });
+  await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: { opacity: 20 } });
+  assert.equal(styleSet(ps).to.masterFXSwitch, true, "set on an enabled shadow");
+  ps = makeStub({ gets: effectsGet({ 3: off }) });
+  await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: { opacity: 20 } });
+  assert.equal(styleSet(ps).to.masterFXSwitch, false, "a hidden shadow leaves the switch alone");
+  ps = makeStub({ gets: effectsGet({ 3: { ...off, masterFXSwitch: true, dropShadow: CURRENT_SHADOW } }) });
+  await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", enabled: false });
+  assert.equal(styleSet(ps).to.masterFXSwitch, true, "turning the shadow off keeps the stroke showing");
+});
+
 test("add_layer_style turns Use Global Light off even over a global shadow", async () => {
   const globalShadow = { ...CURRENT_SHADOW, useGlobalAngle: true };
   const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), dropShadow: globalShadow } }) });

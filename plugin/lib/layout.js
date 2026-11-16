@@ -28,13 +28,14 @@ function moveDelta(union, { dx, dy, x, y } = {}) {
 const centre = (b) => ({ x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 });
 
 // transform_layer: the offset that moves the bounds centre to (cx, cy) (a
-// missing axis keeps it). Under QCSAverage Photoshop scales and rotates about
-// that centre, then applies the offset.
+// missing axis keeps it), in whole pixels like moveDelta; cx/cy is where the
+// centre lands after that rounding. Under QCSAverage Photoshop scales and
+// rotates about that centre, then applies the offset.
 function transformDelta(bounds, { cx, cy } = {}) {
   const c = centre(bounds);
-  const tx = has(cx) ? cx : c.x;
-  const ty = has(cy) ? cy : c.y;
-  return { dx: tx - c.x + 0, dy: ty - c.y + 0, cx: tx, cy: ty };
+  const dx = has(cx) ? whole(cx - c.x) : 0;
+  const dy = has(cy) ? whole(cy - c.y) : 0;
+  return { dx, dy, cx: c.x + dx, cy: c.y + dy };
 }
 
 // One axis: the shift that aligns [b0, b1] to [t0, t1] at start, center or end.

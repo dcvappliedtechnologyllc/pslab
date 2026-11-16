@@ -29,7 +29,12 @@ test("transformDelta moves the bounds centre to (cx, cy); a missing axis keeps i
   assert.deepEqual(L.transformDelta(b, {}), { dx: 0, dy: 0, cx: 200, cy: 300 });
   assert.deepEqual(L.transformDelta(b, { cx: 500 }), { dx: 300, dy: 0, cx: 500, cy: 300 });
   assert.deepEqual(L.transformDelta(b, { cx: 150, cy: 250 }), { dx: -50, dy: -50, cx: 150, cy: 250 });
-  assert.deepEqual(L.transformDelta(box(0, 0, 5, 5), { cx: 3 }), { dx: 0.5, dy: 0, cx: 3, cy: 2.5 });
+});
+
+test("transformDelta rounds dx/dy to whole pixels (no resampling blur from the offset); cx/cy is where the centre lands", () => {
+  assert.deepEqual(L.transformDelta(box(0, 0, 5, 5), { cx: 3 }), { dx: 1, dy: 0, cx: 3.5, cy: 2.5 });
+  assert.deepEqual(L.transformDelta(box(0, 0, 5, 5), { cx: 2.2, cy: 4.4 }), { dx: 0, dy: 2, cx: 2.5, cy: 4.5 });
+  assert.deepEqual(L.transformDelta(box(0, 0, 5, 5), { cx: 2 }), { dx: 0, dy: 0, cx: 2.5, cy: 2.5 }); // -0.5 -> 0, not -0
 });
 
 test("alignDeltas: each of the six edges, per layer", () => {

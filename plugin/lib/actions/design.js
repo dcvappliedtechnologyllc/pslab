@@ -253,6 +253,8 @@ function shadowSet(rec, existing, full, { keepCurrent = false, enabled, ppi, glo
   shadow.useGlobalAngle = globalAngle;
   if (enabled !== undefined) shadow.enabled = enabled;
   set.to = { ...E.mergeEffects(existing, "dropShadow", shadow), scale: set.to.scale };
+  // an enabled shadow on a layer whose effects are switched off would not show
+  if (shadow.enabled !== false) set.to.masterFXSwitch = true;
   return set;
 }
 
