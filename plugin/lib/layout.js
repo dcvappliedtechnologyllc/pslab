@@ -62,4 +62,84 @@ function alignDeltas(boxes, target, { horizontal, vertical } = {}, asGroup = fal
   return boxes.map(delta);
 }
 
-module.exports = { unionBounds, moveDelta, transformDelta, alignDeltas, centre, whole };
+// ---------- content_aware_fill sample (B3) ----------
+// Trees are DOM-like: {id, visible, isClippingMask?, layers?}, top of the stack first.
+
+const read = (fn, fallback) => {
+  try {
+    const v = fn();
+    return v === undefined || v === null ? fallback : v;
+  } catch {
+    return fallback;
+  }
+};
+const kidsOf = (layer) => Array.from(read(() => layer.layers, null) || []);
+const isVisible = (layer) => read(() => layer.visible, true) !== false;
+
+function flattenTree(layers, out = []) {
+  for (const layer of Array.from(layers || [])) {
+    out.push(layer);
+    flattenTree(kidsOf(layer), out);
+  }
+  return out;
+}
+
+// Ids of the anchor and every layer painted under it (later in a top-first
+// pre-order walk); [] for an unknown anchor.
+function belowIds(layers, anchorId) {
+  const flat = flattenTree(layers);
+  const i = flat.findIndex((l) => l.id === anchorId);
+  return i === -1 ? [] : flat.slice(i).map((l) => l.id);
+}
+
+// Ids to hide so only the kept layers show: every visible layer that is not
+// kept and holds nothing kept. Groups holding a kept layer stay visible (their
+// other children are hidden one by one); a kept group keeps its contents; a
+// kept clipped layer keeps its clipping base (the next unclipped sibling
+// below), or it would show nothing. Hidden layers are left alone, so turning
+// the returned ids back on restores the document exactly.
+function hidePlan(layers, keepIds) {
+  const keep = new Set(keepIds);
+  const addBases = (list) => {
+    list.forEach((layer, i) => {
+      if (keep.has(layer.id) && read(() => layer.isClippingMask, false) === true) {
+        const base = list.slice(i + 1).find((l) => read(() => l.isClippingMask, false) !== true);
+        if (base) keep.add(base.id);
+      }
+      addBases(kidsOf(layer));
+    });
+  };
+  addBases(Array.from(layers || []));
+  const holdsKept = (layer) => keep.has(layer.id) || kidsOf(layer).some(holdsKept);
+  const hide = [];
+  const walk = (list) => {
+    for (const layer of list) {
+      if (keep.has(layer.id)) continue;
+      if (kidsOf(layer).some(holdsKept)) walk(kidsOf(layer));
+      else if (isVisible(layer)) hide.push(layer.id);
+    }
+  };
+  walk(Array.from(layers || []));
+  return hide;
+}
+
+// Non-group layers that still show once hideIds are hidden.
+function visibleLeaves(layers, hideIds) {
+  const hidden = new Set(hideIds);
+  const out = [];
+  const walk = (list) => {
+    for (const layer of list) {
+      if (hidden.has(layer.id) || !isVisible(layer)) continue;
+      const kids = read(() => layer.layers, null);
+      if (kids) walk(Array.from(kids));
+      else out.push(layer);
+    }
+  };
+  walk(Array.from(layers || []));
+  return out;
+}
+
+module.exports = {
+  unionBounds, moveDelta, transformDelta, alignDeltas, centre, whole,
+  belowIds, hidePlan, visibleLeaves, flattenTree,
+};

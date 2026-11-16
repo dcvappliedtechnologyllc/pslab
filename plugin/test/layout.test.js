@@ -57,3 +57,39 @@ test("alignDeltas to a target layer's box, rounded to whole pixels", () => {
   const target = box(10, 10, 111, 60); // centre x 60.5
   assert.deepEqual(L.alignDeltas([box(0, 0, 20, 20)], target, { horizontal: "center" }, false), [{ dx: 51, dy: 0 }]);
 });
+
+// ---------- B3: sample planning ----------
+
+// Title (text), Light group [Light A, Light B], Bars group [Bar (clipped), Base], Patch (hidden), Background.
+const tree = () => [
+  { id: 3, kind: "text", visible: true },
+  { id: 10, kind: "group", visible: true, layers: [{ id: 11, kind: "curves", visible: true }, { id: 12, kind: "exposure", visible: true }] },
+  { id: 20, kind: "group", visible: true, layers: [{ id: 21, kind: "pixel", visible: true, isClippingMask: true }, { id: 22, kind: "pixel", visible: true }] },
+  { id: 30, kind: "pixel", visible: false },
+  { id: 1, kind: "pixel", visible: true, isBackgroundLayer: true },
+];
+
+test("belowIds: the anchor and everything painted under it", () => {
+  assert.deepEqual(L.belowIds(tree(), 1), [1]);
+  assert.deepEqual(L.belowIds(tree(), 20), [20, 21, 22, 30, 1]);
+  assert.deepEqual(L.belowIds(tree(), 22), [22, 30, 1]);
+  assert.deepEqual(L.belowIds(tree(), 404), []);
+});
+
+test("hidePlan hides visible layers that are not kept, keeping kept layers' groups", () => {
+  assert.deepEqual(L.hidePlan(tree(), [1]), [3, 10, 20]); // 30 is already hidden
+  assert.deepEqual(L.hidePlan(tree(), L.belowIds(tree(), 22)), [3, 10, 21]); // group 20 stays visible for 22
+  assert.deepEqual(L.hidePlan(tree(), [11, 1]), [3, 12, 20]);
+  assert.deepEqual(L.hidePlan(tree(), [10, 1]), [3, 20]); // a kept group keeps its contents
+});
+
+test("hidePlan keeps the base of a kept clipped layer", () => {
+  assert.deepEqual(L.hidePlan(tree(), [21]), [3, 10, 1]);
+});
+
+test("visibleLeaves lists what still shows after hiding", () => {
+  const ids = (list) => list.map((l) => l.id);
+  assert.deepEqual(ids(L.visibleLeaves(tree(), [])), [3, 11, 12, 21, 22, 1]);
+  assert.deepEqual(ids(L.visibleLeaves(tree(), [3, 10, 20])), [1]);
+  assert.deepEqual(ids(L.visibleLeaves(tree(), [3, 10, 20, 1])), []);
+});

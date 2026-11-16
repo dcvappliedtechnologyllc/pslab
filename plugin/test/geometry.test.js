@@ -595,3 +595,101 @@ test("clone_from and content_aware_fill with a missing above are NO_LAYER before
     assert.equal(modalCount(ps), 0);
   }
 });
+
+// ---------- B3: content_aware_fill sample ----------
+
+// Adds a "Title" text layer (id 5) on top and records every visibility write.
+function withSampleLayers(ps) {
+  const title = { id: 5, name: "Title", kind: "text", bounds: { left: 10, top: 10, right: 90, bottom: 40 } };
+  ps.doc.layers.unshift(title);
+  ps.doc.layers.find((l) => l.id === 2).kind = "pixel";
+  for (const layer of ps.doc.layers) {
+    let v = true;
+    Object.defineProperty(layer, "visible", {
+      configurable: true,
+      get: () => v,
+      set: (x) => {
+        ps.calls.push(["visible", layer.id, x]);
+        v = x;
+      },
+    });
+  }
+  return ps;
+}
+const visWrites = (ps) => ps.calls.filter((c) => c[0] === "visible").map((c) => [c[1], c[2]]);
+const cafBbox = { left: 100, top: 100, right: 200, bottom: 160 };
+
+test("content_aware_fill sample below: hides what is above the anchor, duplicates the lone layer left, restores", async () => {
+  const ps = withSampleLayers(makeStub());
+  const res = await geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "Light removed", sample: "below", above: 1 });
+  assert.deepEqual(visWrites(ps), [[5, false], [2, false], [5, true], [2, true]]);
+  assert.deepEqual(ps.calls.find((c) => c[0] === "duplicate"), ["duplicate", 1]);
+  assert.ok(!allDescs(ps).some((x) => x._obj === "mergeVisible"));
+  // the fill runs on the patch, selected by id
+  assert.deepEqual(allDescs(ps).slice(0, 3), [D.selectLayerById(100), D.selectRectangle(cafBbox), D.expand(2)]);
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [5, 2, 100, 1]);
+  assert.equal(res.layer_id, 100);
+  assert.deepEqual(suspends(ps), [{ documentID: 1, name: "Claude: content_aware_fill, Light removed" }]);
+  assert.deepEqual(resumes(ps), [true]);
+});
+
+test("content_aware_fill sample layers: one listed pixel layer is duplicated and the patch goes on top", async () => {
+  const ps = withSampleLayers(makeStub());
+  await geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample: "layers", sample_layers: [2] });
+  assert.deepEqual(visWrites(ps), [[5, false], [1, false], [5, true], [1, true]]);
+  assert.deepEqual(ps.calls.find((c) => c[0] === "duplicate"), ["duplicate", 2]);
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [100, 5, 2, 1]);
+});
+
+test("content_aware_fill sample layers: several listed layers are stamped with the rest hidden", async () => {
+  const ps = withSampleLayers(makeStub());
+  await geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample: "layers", sample_layers: [2, 1] });
+  assert.deepEqual(visWrites(ps), [[5, false], [5, true]]);
+  assert.ok(allDescs(ps).some((x) => x._obj === "mergeVisible"));
+  const hideAt = ps.calls.findIndex((c) => c[0] === "visible" && c[2] === false);
+  const stampAt = ps.calls.findIndex((c) => c[0] === "batchPlay" && c[1].some((x) => x._obj === "mergeVisible"));
+  const showAt = ps.calls.findIndex((c) => c[0] === "visible" && c[2] === true);
+  assert.ok(hideAt < stampAt && stampAt < showAt);
+});
+
+test("content_aware_fill sample: visibility is restored when the fill fails", async () => {
+  const ps = withSampleLayers(makeStub({ failOn: "mergeVisible" }));
+  await assert.rejects(
+    geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample: "layers", sample_layers: [2, 1] }),
+    { code: "BATCHPLAY" },
+  );
+  assert.deepEqual(visWrites(ps), [[5, false], [5, true]]);
+  assert.deepEqual(resumes(ps), [false]);
+});
+
+test("content_aware_fill sample below without above, or visible, hides nothing", async () => {
+  for (const sample of ["below", "visible"]) {
+    const ps = withSampleLayers(makeStub());
+    await geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample });
+    assert.deepEqual(visWrites(ps), [], sample);
+  }
+});
+
+test("content_aware_fill sample arguments are checked before any modal", async () => {
+  const cases = [
+    [{ sample: "layers" }, "INVALID_ARGS"],
+    [{ sample: "visible", sample_layers: [2] }, "INVALID_ARGS"],
+    [{ sample: "everything" }, "INVALID_ARGS"],
+    [{ sample: "layers", sample_layers: [] }, "INVALID_ARGS"],
+    [{ sample: "layers", sample_layers: [404] }, "NO_LAYER"],
+  ];
+  for (const [extra, code] of cases) {
+    const ps = withSampleLayers(makeStub());
+    await assert.rejects(geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", ...extra }), { code }, JSON.stringify(extra));
+    assert.equal(modalCount(ps), 0);
+  }
+  // only hidden layers listed: nothing would be visible to sample
+  const ps = withSampleLayers(makeStub());
+  ps.doc.layers[0].visible = false;
+  ps.calls.length = 0;
+  await assert.rejects(
+    geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample: "layers", sample_layers: [5] }),
+    (e) => e.code === "INVALID_ARGS" && /Nothing visible/.test(e.message),
+  );
+  assert.equal(modalCount(ps), 0);
+});

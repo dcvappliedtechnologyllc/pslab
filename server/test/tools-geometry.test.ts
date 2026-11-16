@@ -101,14 +101,14 @@ describe("geometry tools over MCP", () => {
     const bbox = { left: 10, top: 20, right: 110, bottom: 220 };
     const res = await client.callTool({ name: "content_aware_fill", arguments: { doc: 2, bbox, name: "Outlet removed" } });
     expect(res.isError).toBeFalsy();
-    expect(seen).toEqual([{ action: "content_aware_fill", args: { doc: 2, bbox, name: "Outlet removed" } }]);
+    expect(seen).toEqual([{ action: "content_aware_fill", args: { doc: 2, bbox, name: "Outlet removed", sample: "visible" } }]);
   });
 
   it("content_aware_fill forwards a polygon", async () => {
     const polygon = [{ x: 1, y: 1 }, { x: 9, y: 1 }, { x: 5, y: 8 }];
     const res = await client.callTool({ name: "content_aware_fill", arguments: { polygon, name: "Patch" } });
     expect(res.isError).toBeFalsy();
-    expect(seen).toEqual([{ action: "content_aware_fill", args: { polygon, name: "Patch" } }]);
+    expect(seen).toEqual([{ action: "content_aware_fill", args: { polygon, name: "Patch", sample: "visible" } }]);
   });
 
   it("content_aware_fill refuses neither/both regions, a short polygon or a missing name", async () => {
@@ -123,6 +123,33 @@ describe("geometry tools over MCP", () => {
     ]) {
       const res = await client.callTool({ name: "content_aware_fill", arguments: args });
       expect(res.isError).toBe(true);
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it("content_aware_fill forwards sample below and sample layers", async () => {
+    const bbox = { left: 10, top: 20, right: 110, bottom: 220 };
+    await client.callTool({ name: "content_aware_fill", arguments: { bbox, name: "P", sample: "below", above: 1 } });
+    await client.callTool({ name: "content_aware_fill", arguments: { bbox, name: "P", sample: "layers", sample_layers: [1, 4] } });
+    expect(seen).toEqual([
+      { action: "content_aware_fill", args: { bbox, name: "P", sample: "below", above: 1 } },
+      { action: "content_aware_fill", args: { bbox, name: "P", sample: "layers", sample_layers: [1, 4] } },
+    ]);
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "content_aware_fill")!;
+    expect(t.description).toContain('"below"');
+    expect(t.description).toContain("sample_layers");
+  });
+
+  it("content_aware_fill refuses sample layers without ids, ids without sample layers, and an unknown sample", async () => {
+    const bbox = { left: 0, top: 0, right: 10, bottom: 10 };
+    for (const extra of [{ sample: "layers" }, { sample_layers: [1] }, { sample: "below", sample_layers: [1] }]) {
+      const res = await client.callTool({ name: "content_aware_fill", arguments: { bbox, name: "P", ...extra } });
+      expect(textOf(res), JSON.stringify(extra)).toBe('Give sample_layers exactly when sample is "layers".');
+    }
+    for (const extra of [{ sample: "all" }, { sample: "layers", sample_layers: [] }]) {
+      const res = await client.callTool({ name: "content_aware_fill", arguments: { bbox, name: "P", ...extra } });
+      expect(res.isError, JSON.stringify(extra)).toBe(true);
     }
     expect(seen).toEqual([]);
   });
@@ -188,16 +215,16 @@ describe("geometry tools over MCP", () => {
     expect(tools.find((x) => x.name === "content_aware_fill")!.description).toContain("whole canvas");
   });
 
-  it("clone_from and content_aware_fill forward above and say the fill still samples everything visible", async () => {
+  it("clone_from and content_aware_fill forward above; clone_from still samples everything visible", async () => {
     const bbox = { left: 10, top: 10, right: 50, bottom: 50 };
     await client.callTool({ name: "content_aware_fill", arguments: { bbox, name: "L", above: 1 } });
     await client.callTool({ name: "clone_from", arguments: { src_bbox: bbox, dst: { x: 0, y: 0 }, name: "C", above: 1 } });
     expect(seen).toEqual([
-      { action: "content_aware_fill", args: { bbox, name: "L", above: 1 } },
+      { action: "content_aware_fill", args: { bbox, name: "L", above: 1, sample: "visible" } },
       { action: "clone_from", args: { src_bbox: bbox, dst: { x: 0, y: 0 }, name: "C", above: 1 } },
     ]);
     const { tools } = await client.listTools();
-    expect(tools.find((x) => x.name === "content_aware_fill")!.description).toContain("samples everything visible");
+    expect(tools.find((x) => x.name === "content_aware_fill")!.description).toContain("(default) everything visible");
     expect(tools.find((x) => x.name === "clone_from")!.description).toContain("samples everything visible");
   });
 });

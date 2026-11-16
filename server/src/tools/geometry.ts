@@ -69,20 +69,36 @@ export function registerGeometryTools(server: McpServer, bridge: PluginBridge): 
         "and other layers are untouched; hide or delete the patch layer to undo the look. Layers added later above " +
         "it are not part of the fill. A region that (with the 2 px growth) covers the whole canvas is refused with " +
         "INVALID_ARGS: there would be nothing left to sample. above (a layer id) moves the finished patch directly above " +
-        "that layer, e.g. the Background so it sits under adjustment and text layers; the fill still samples " +
-        "everything visible, so hide text and lighting layers first if they cover the area. Returns layer_id and the " +
-        "patch bounds. One undoable history step.",
+        "that layer, e.g. the Background so it sits under adjustment and text layers. sample picks what the fill " +
+        'is made from: "visible" (default) everything visible; "below" only the above layer and what is under it ' +
+        "(text, lighting and adjustment layers above the patch are left out, so toggling them later still lights the " +
+        'patch consistently; without above it is the same as visible); "layers" only the ids in sample_layers (their ' +
+        "groups stay on; a listed clipped layer keeps its base). Other layers are hidden only while the stamp is " +
+        "taken and shown again, all inside the same history step. Returns layer_id and the patch bounds. One " +
+        "undoable history step.",
       inputSchema: {
         doc: z.number().int().optional().describe("Document id; defaults to the active document"),
         bbox: box.optional().describe("Region to fill in image pixels (left < right, top < bottom); or give polygon"),
         polygon: z.array(point).min(3).optional().describe("Region to fill as polygon corners in image pixels; or give bbox"),
         name: z.string().min(1).describe('Name for the new patch layer, e.g. "Outlet removed"'),
         above: z.number().int().optional().describe("Layer id the patch goes directly above; default: top of the stack"),
+        sample: z
+          .enum(["visible", "below", "layers"])
+          .default("visible")
+          .describe('What the fill samples: visible (default), below (the above layer and under it), layers (sample_layers)'),
+        sample_layers: z
+          .array(z.number().int())
+          .min(1)
+          .optional()
+          .describe('Layer ids to sample; only with sample: "layers"'),
       },
     },
     async (args) => {
       if ((args.bbox === undefined) === (args.polygon === undefined)) {
         return toolError("Give exactly one of bbox or polygon.");
+      }
+      if ((args.sample === "layers") !== (args.sample_layers !== undefined)) {
+        return toolError('Give sample_layers exactly when sample is "layers".');
       }
       return call(bridge, "content_aware_fill", args);
     },

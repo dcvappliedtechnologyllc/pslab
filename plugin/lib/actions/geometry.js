@@ -7,6 +7,7 @@ const { runStep, runRead, bp } = require("../step");
 const { findLayer, resolveDoc, normEdges: norm, layerBounds } = require("../doc");
 const { estimateTilt, toGray, round1, coversCanvas, polygonCoversCanvas } = require("../geometry");
 const { requireAnchor, placeAbove } = require("../place");
+const { belowIds, hidePlan, visibleLeaves } = require("../layout");
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -207,6 +208,75 @@ async function stampOnTop(ps, d, name) {
 // ---------- content_aware_fill ----------
 
 const APRON_PX = 2;
+const SAMPLES = ["visible", "below", "layers"];
+
+const isPixelLayer = (layer) =>
+  safe(() => layer.isBackgroundLayer, false) === true || String(safe(() => layer.kind, "")) === "pixel";
+
+// What content_aware_fill samples, checked before the step. null: everything
+// visible (sample "visible", or "below" without above). Otherwise {hide, sole}:
+// the visible layers to hide for the stamp, and the id of the one pixel layer
+// left showing when only one is (duplicated instead of Stamp Visible).
+function samplePlan(d, args, hasAbove) {
+  const sample = args.sample ?? "visible";
+  if (!SAMPLES.includes(sample)) throw invalidArgs(`sample must be visible, below or layers, got ${sample}`);
+  const hasList = args.sample_layers !== undefined && args.sample_layers !== null;
+  if (sample === "layers" && !hasList) throw invalidArgs('sample "layers" needs sample_layers (layer ids)');
+  if (sample !== "layers" && hasList) throw invalidArgs('sample_layers is only used with sample: "layers"');
+  let keep = null;
+  if (sample === "below" && hasAbove) keep = belowIds(d.layers, args.above);
+  if (sample === "layers") {
+    const ids = args.sample_layers;
+    if (!Array.isArray(ids) || ids.length === 0) throw invalidArgs("sample_layers must list at least one layer id");
+    for (const id of ids) {
+      if (!findLayer(d, id)) throw codedError("NO_LAYER", `No layer with id ${id}`);
+    }
+    keep = ids;
+  }
+  if (!keep) return null;
+  const hide = hidePlan(d.layers, keep);
+  const leaves = visibleLeaves(d.layers, hide);
+  if (leaves.length === 0) {
+    throw invalidArgs("Nothing visible to sample: the layers to sample are hidden or empty; show them or pick others");
+  }
+  return { hide, sole: leaves.length === 1 && isPixelLayer(leaves[0]) ? leaves[0].id : null };
+}
+
+// The stamp with only the sampled layers showing. Visibility is toggled inside
+// the caller's suspended step and always restored (finally), so the net change
+// is the new layer. With one pixel layer left, Stamp Visible is not used (it
+// needs more than one); that layer is duplicated, put on top unless toTop is
+// false (the caller places it), and selected for the fill.
+async function stampSampled(ps, d, name, plan, toTop) {
+  const hidden = [];
+  try {
+    for (const id of plan.hide) {
+      const layer = findLayer(d, id);
+      if (layer) {
+        layer.visible = false;
+        hidden.push(layer);
+      }
+    }
+    if (!plan.sole) return await stampOnTop(ps, d, name);
+    const src = findLayer(d, plan.sole);
+    const layer = src ? await src.duplicate() : null;
+    if (!layer) throw codedError("NO_NEW_LAYER", "Duplicating the sampled layer did not make a new layer");
+    layer.name = name;
+    if (safe(() => layer.isClippingMask, false) === true) layer.isClippingMask = false;
+    const top = Array.from(d.layers || [])[0];
+    if (toTop && top && top.id !== layer.id) await layer.move(top, ps.constants.ElementPlacement.PLACEBEFORE);
+    await bp(ps, [D.selectLayerById(layer.id)]);
+    return findLayer(d, layer.id) || layer;
+  } finally {
+    for (const layer of hidden) {
+      try {
+        layer.visible = true;
+      } catch {
+        // keep restoring the rest; the step rolls back on failure anyway
+      }
+    }
+  }
+}
 
 async function content_aware_fill(ps, args = {}) {
   const hasBbox = args.bbox !== undefined && args.bbox !== null;
@@ -236,11 +306,12 @@ async function content_aware_fill(ps, args = {}) {
 
   const hasAbove = args.above !== undefined && args.above !== null;
   if (hasAbove) requireAnchor(d, args.above);
+  const plan = samplePlan(d, args, hasAbove);
 
   return stepIn(ps, `Claude: content_aware_fill, ${args.name}`, d, async () => {
-    // The stamp is taken on top (it samples everything visible); `above` only
-    // moves the finished patch.
-    let layer = await stampOnTop(ps, d, args.name);
+    // The stamp is taken on top with only the sampled layers showing; `above`
+    // only moves the finished patch.
+    let layer = plan ? await stampSampled(ps, d, args.name, plan, !hasAbove) : await stampOnTop(ps, d, args.name);
     // Fill the region (plus a 2 px apron so the patch blends at its edge) on
     // the stamped copy, then erase everything else so only the patch remains.
     await bp(ps, [
