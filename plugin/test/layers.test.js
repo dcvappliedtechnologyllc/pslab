@@ -307,3 +307,50 @@ test("move_layer refusals happen before any modal call", async () => {
     assert.equal(modalCount(ps), 0);
   }
 });
+
+// ---------- transform_layer ----------
+
+test("transform_layer scales and rotates about the centre, then offsets it to (cx, cy)", async () => {
+  const ps = makeStub();
+  const r = await layers.transform_layer(ps, { doc: 1, layer: 3, scale_pct: 76, cx: 500 });
+  const descs = bpDescs(ps).map(strip);
+  assert.deepEqual(descs[0], { _obj: "select", _target: [{ _ref: "layer", _id: 3 }], makeVisible: false });
+  const t = descs[1];
+  assert.equal(t._obj, "transform");
+  assert.deepEqual(t.freeTransformCenterState, { _enum: "quadCenterState", _value: "QCSAverage" });
+  assert.deepEqual(t.width, { _unit: "percentUnit", _value: 76 });
+  assert.deepEqual(t.height, { _unit: "percentUnit", _value: 76 });
+  assert.deepEqual(t.angle, { _unit: "angleUnit", _value: 0 });
+  assert.deepEqual(t.offset.horizontal, { _unit: "pixelsUnit", _value: 0 }); // already centred at 500
+  assert.deepEqual(t.offset.vertical, { _unit: "pixelsUnit", _value: 0 });
+  assert.equal(historyName(ps), "Claude: transform_layer, 76% 0° @ 500,150");
+  assert.equal(r.layer_id, 3);
+  assert.ok(r.bounds);
+});
+
+test("transform_layer rotate only, moved centre", async () => {
+  const ps = makeStub();
+  await layers.transform_layer(ps, { doc: 1, layer: 4, rotate_deg: -90, cx: 100, cy: 400 });
+  const t = bpDescs(ps).map(strip)[1];
+  assert.deepEqual(t.width, { _unit: "percentUnit", _value: 100 });
+  assert.deepEqual(t.angle, { _unit: "angleUnit", _value: -90 });
+  assert.deepEqual(t.offset.horizontal, { _unit: "pixelsUnit", _value: -400 });
+  assert.deepEqual(t.offset.vertical, { _unit: "pixelsUnit", _value: 176 });
+  assert.equal(historyName(ps), "Claude: transform_layer, 100% -90° @ 100,400");
+});
+
+test("transform_layer refusals happen before any modal call", async () => {
+  const cases = [
+    [{ layer: 3 }, "INVALID_ARGS"],
+    [{ layer: 3, scale_pct: 0 }, "INVALID_ARGS"],
+    [{ layer: 3, rotate_deg: 200 }, "INVALID_ARGS"],
+    [{ layer: 1, scale_pct: 50 }, "PROTECTED_LAYER"],
+    [{ layer: 8, scale_pct: 50 }, "EMPTY_LAYER"],
+    [{ layer: 404, scale_pct: 50 }, "NO_LAYER"],
+  ];
+  for (const [args, code] of cases) {
+    const ps = makeStub();
+    await assert.rejects(layers.transform_layer(ps, { doc: 1, ...args }), { code }, JSON.stringify(args));
+    assert.equal(modalCount(ps), 0);
+  }
+});

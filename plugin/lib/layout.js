@@ -25,4 +25,16 @@ function moveDelta(union, { dx, dy, x, y } = {}) {
   return { dx: has(dx) ? whole(dx) : 0, dy: has(dy) ? whole(dy) : 0 };
 }
 
-module.exports = { unionBounds, moveDelta, whole };
+const centre = (b) => ({ x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 });
+
+// transform_layer: the offset that moves the bounds centre to (cx, cy) (a
+// missing axis keeps it). Under QCSAverage Photoshop scales and rotates about
+// that centre, then applies the offset.
+function transformDelta(bounds, { cx, cy } = {}) {
+  const c = centre(bounds);
+  const tx = has(cx) ? cx : c.x;
+  const ty = has(cy) ? cy : c.y;
+  return { dx: tx - c.x + 0, dy: ty - c.y + 0, cx: tx, cy: ty };
+}
+
+module.exports = { unionBounds, moveDelta, transformDelta, centre, whole };

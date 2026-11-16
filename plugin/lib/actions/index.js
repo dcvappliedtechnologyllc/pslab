@@ -49,4 +49,5 @@ module.exports = {
   select_layer: layers.select_layer,
   reorder_layer: layers.reorder_layer,
   move_layer: layers.move_layer,
+  transform_layer: layers.transform_layer,
 };

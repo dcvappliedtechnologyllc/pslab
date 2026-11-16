@@ -96,4 +96,34 @@ export function registerLayerTools(server: McpServer, bridge: PluginBridge): voi
       return call(bridge, "move_layer", args);
     },
   );
+
+  server.registerTool(
+    "transform_layer",
+    {
+      annotations: hints.edit,
+      description:
+        "Scale, rotate and/or re-centre one layer (Edit > Free Transform), in doc. scale_pct (1..1000, of the current " +
+        "size, both axes) and rotate_deg (-180..180, positive = clockwise) act about the centre of the layer's bounds; " +
+        "cx/cy (image pixels) then put that centre at the given point (a missing axis keeps it). Values are relative " +
+        "to the layer's current state, so repeating the call scales or rotates again. Pixel layers lose a little " +
+        "quality on every scale or rotate (repeated transforms blur); text, shape and smart object layers do not, so on " +
+        "a pixel layer prefer one transform over several small ones. The Background is " +
+        "refused (PROTECTED_LAYER), and so is a layer without pixels (EMPTY_LAYER). Returns layer_id and bounds after " +
+        "the transform. One undoable history step.",
+      inputSchema: {
+        doc: docArg,
+        layer: layerId.describe("The layer to transform"),
+        scale_pct: z.number().min(1).max(1000).optional().describe("Scale in percent of the current size; default 100"),
+        rotate_deg: z.number().min(-180).max(180).optional().describe("Rotation in degrees, positive = clockwise; default 0"),
+        cx: z.number().optional().describe("Where the layer's centre ends up, x in image pixels; default unchanged"),
+        cy: z.number().optional().describe("Where the layer's centre ends up, y in image pixels; default unchanged"),
+      },
+    },
+    async (args) => {
+      if (![args.scale_pct, args.rotate_deg, args.cx, args.cy].some(given)) {
+        return toolError("Give at least one of scale_pct, rotate_deg, cx or cy.");
+      }
+      return call(bridge, "transform_layer", args);
+    },
+  );
 }

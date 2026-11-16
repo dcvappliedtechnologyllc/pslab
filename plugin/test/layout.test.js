@@ -23,3 +23,11 @@ test("moveDelta absolute moves the union's top-left to (x, y); a missing axis st
   assert.deepEqual(L.moveDelta(u, { x: 200 }), { dx: 100, dy: 0 });
   assert.deepEqual(L.moveDelta(u, { y: 200 }), { dx: 0, dy: 0 });
 });
+
+test("transformDelta moves the bounds centre to (cx, cy); a missing axis keeps it", () => {
+  const b = box(100, 200, 300, 400); // centre 200, 300
+  assert.deepEqual(L.transformDelta(b, {}), { dx: 0, dy: 0, cx: 200, cy: 300 });
+  assert.deepEqual(L.transformDelta(b, { cx: 500 }), { dx: 300, dy: 0, cx: 500, cy: 300 });
+  assert.deepEqual(L.transformDelta(b, { cx: 150, cy: 250 }), { dx: -50, dy: -50, cx: 150, cy: 250 });
+  assert.deepEqual(L.transformDelta(box(0, 0, 5, 5), { cx: 3 }), { dx: 0.5, dy: 0, cx: 3, cy: 2.5 });
+});

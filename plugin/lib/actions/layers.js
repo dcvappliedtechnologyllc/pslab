@@ -4,7 +4,7 @@
 const D = require("../descriptors");
 const { runRead, bp } = require("../step");
 const { findLayer, resolveDoc, safe, layerBounds } = require("../doc");
-const { unionBounds, moveDelta } = require("../layout");
+const { unionBounds, moveDelta, transformDelta } = require("../layout");
 const { codedError, requireLayer, stepIn, isProtectedLayer } = require("./edit");
 const { requireAnchor, placeAbove, placeBelow, isDirectlyAbove, isDirectlyBelow, locate } = require("../place");
 
@@ -181,4 +181,30 @@ async function move_layer(ps, args = {}) {
   });
 }
 
-module.exports = { select_layer, reorder_layer, move_layer };
+// ---------- transform_layer ----------
+
+const fmt = (v) => String(Math.round(v * 10) / 10);
+
+async function transform_layer(ps, args = {}) {
+  const scale = args.scale_pct;
+  const angle = args.rotate_deg;
+  if (![scale, angle, args.cx, args.cy].some(has)) {
+    throw invalid("Give at least one of scale_pct, rotate_deg, cx or cy");
+  }
+  if (has(scale) && !(scale >= 1 && scale <= 1000)) throw invalid(`scale_pct must be 1..1000, got ${scale}`);
+  if (has(angle) && !(angle >= -180 && angle <= 180)) throw invalid(`rotate_deg must be -180..180, got ${angle}`);
+  const { d } = resolveDoc(ps, args.doc);
+  const layer = requireMovable(d, args.layer);
+  const bounds = layerBounds(layer);
+  if (!bounds) throw codedError("EMPTY_LAYER", `Layer ${layer.id} (${nameOf(layer)}) has no pixels to transform`);
+  const { dx, dy, cx, cy } = transformDelta(bounds, args);
+  const scalePct = has(scale) ? scale : 100;
+  const angleDeg = has(angle) ? angle : 0;
+  const name = `Claude: transform_layer, ${fmt(scalePct)}% ${fmt(angleDeg)}° @ ${fmt(cx)},${fmt(cy)}`;
+  return stepIn(ps, name, d, async () => {
+    await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct, angleDeg, dx, dy })]);
+    return { layer_id: layer.id, bounds: boundsNow(d, layer) };
+  });
+}
+
+module.exports = { select_layer, reorder_layer, move_layer, transform_layer };

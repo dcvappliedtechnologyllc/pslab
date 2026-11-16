@@ -110,4 +110,28 @@ describe("layer tools over MCP", () => {
     expect(textOf(mixed)).toBe("Give either dx/dy (relative) or x/y (absolute), not both.");
     expect(seen).toEqual([]);
   });
+
+  // ---------- transform_layer ----------
+
+  it("transform_layer forwards scale/rotate/centre and is an edit tool", async () => {
+    const res = await run("transform_layer", { layer: 3, scale_pct: 76, cx: 540 });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "transform_layer", args: { layer: 3, scale_pct: 76, cx: 540 } }]);
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "transform_layer")!;
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false });
+    expect(t.description).toContain("positive = clockwise");
+    expect(t.description).toContain("lose a little quality");
+    expect(t.description).toContain("smart object");
+  });
+
+  it("transform_layer refuses no change and out-of-range values before forwarding", async () => {
+    const none = await run("transform_layer", { layer: 3 });
+    expect(textOf(none)).toBe("Give at least one of scale_pct, rotate_deg, cx or cy.");
+    for (const bad of [{ scale_pct: 0 }, { scale_pct: 2000 }, { rotate_deg: 270 }]) {
+      const res = await run("transform_layer", { layer: 3, ...bad });
+      expect(res.isError, JSON.stringify(bad)).toBe(true);
+    }
+    expect(seen).toEqual([]);
+  });
 });
