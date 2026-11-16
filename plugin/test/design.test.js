@@ -249,3 +249,80 @@ test("add_shape refuses bad arguments before any modal call", async () => {
   assert.equal(modalCount(ps), 0);
 });
 
+
+// ---------- add_layer_style ----------
+
+const pct = (v) => ({ _unit: "percentUnit", _value: v });
+const pxu = (v) => ({ _unit: "pixelsUnit", _value: v });
+const STROKE = { _obj: "frameFX", enabled: true, present: true, size: pxu(3) };
+const effectsGet = (byLayer) => ({ layerEffects: (id) => (byLayer[id] ? { layerEffects: byLayer[id] } : {}) });
+const styleSet = (ps) => bpDescs(ps).find((x) => x._obj === "set" && x._target[0]._property === "layerEffects");
+
+test("add_layer_style drop_shadow: defaults, recorded set, scale from ppi, one step", async () => {
+  const ps = makeStub({ gets: effectsGet({}) });
+  const r = await design.add_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow" });
+  assert.deepEqual(r, {
+    ok: true, layer_id: 3, style: "drop_shadow",
+    applied: { color: { r: 0, g: 0, b: 0 }, opacity: 35, angle: 120, distance_px: 6, spread_pct: 0, size_px: 10, blend: "multiply" },
+  });
+  assert.equal(modalCount(ps), 1);
+  assert.equal(historyName(ps), "Claude: add_layer_style, drop_shadow Title");
+  const get = bpDescs(ps)[0];
+  assert.equal(get._obj, "get");
+  assert.deepEqual(get._target[0], { _property: "layerEffects" });
+  const descs = bpDescs(ps).slice(1);
+  assert.deepEqual(strip(descs[0]), { _obj: "select", _target: [{ _ref: "layer", _id: 3 }], makeVisible: false });
+  const set = descs[1];
+  assert.ok(Math.abs(set.to.scale._value - 486.1111111111111) < 1e-9, "scale = 100 * 350 / 72");
+  const ds = set.to.dropShadow;
+  assert.deepEqual(ds.opacity, pct(35));
+  assert.deepEqual(ds.localLightingAngle, { _unit: "angleUnit", _value: 120 });
+  assert.deepEqual(ds.distance, pxu(6));
+  assert.deepEqual(ds.chokeMatte, pxu(0));
+  assert.deepEqual(ds.blur, pxu(10));
+  assert.deepEqual(ds.color, { _obj: "RGBColor", red: 0, grain: 0, blue: 0 });
+  assert.deepEqual(ds.mode, { _enum: "blendMode", _value: "multiply" });
+  assert.equal(ds.useGlobalAngle, false);
+  assert.equal(ds.enabled, true);
+  assert.equal(ds.layerConceals, true, "recorded extras kept");
+  assert.equal(recorded.drop_shadow.set.to.dropShadow.opacity._value, 40, "template untouched");
+});
+
+test("add_layer_style keeps an existing stroke and its scale, replaces an old shadow", async () => {
+  const existing = { _obj: "layerEffects", scale: pct(300), frameFX: STROKE, dropShadow: { _obj: "dropShadow", opacity: pct(5) } };
+  const ps = makeStub({ gets: effectsGet({ 3: existing }) });
+  await design.add_layer_style(ps, {
+    doc: 1, layer: 3, style: "drop_shadow",
+    params: { color: { r: 20, g: 30, b: 40 }, opacity: 60, angle: 90, distance_px: 12, spread_pct: 10, size_px: 4, blend: "soft_light" },
+  });
+  const set = styleSet(ps);
+  assert.deepEqual(set.to.frameFX, STROKE);
+  assert.deepEqual(set.to.scale, pct(300));
+  const ds = set.to.dropShadow;
+  assert.deepEqual(ds.opacity, pct(60));
+  assert.deepEqual(ds.color, { _obj: "RGBColor", red: 20, grain: 30, blue: 40 });
+  assert.deepEqual(ds.chokeMatte, pxu(10));
+  assert.deepEqual(ds.blur, pxu(4));
+  assert.deepEqual(ds.distance, pxu(12));
+  assert.equal(ds.localLightingAngle._value, 90);
+  assert.equal(ds.mode._value, "softLight");
+});
+
+test("add_layer_style refuses bad params, the Background, unknown styles and a missing recording, before any modal call", async () => {
+  const ps = makeStub({ gets: effectsGet({}) });
+  const bad = [
+    [{ doc: 1, layer: 3, style: "drop_shadow", params: { glow: 3 } }, "INVALID_ARGS"],
+    [{ doc: 1, layer: 3, style: "drop_shadow", params: { opacity: 300 } }, "INVALID_ARGS"],
+    [{ doc: 1, layer: 3, style: "bevel" }, "INVALID_ARGS"],
+    [{ doc: 1, layer: 1, style: "drop_shadow" }, "PROTECTED_LAYER"],
+    [{ doc: 1, layer: 404, style: "drop_shadow" }, "NO_LAYER"],
+  ];
+  for (const [args, code] of bad) await assert.rejects(design.add_layer_style(ps, args), { code }, JSON.stringify(args));
+  design.setRecorded({ drop_shadow: null });
+  try {
+    await assert.rejects(design.add_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow" }), { code: "NOT_SUPPORTED" });
+  } finally {
+    design.setRecorded(null);
+  }
+  assert.equal(modalCount(ps), 0);
+});

@@ -236,6 +236,14 @@ test("applyParams rejects malformed recordings with RECORDED_INVALID", () => {
   assert.deepEqual(ok, [{ _obj: "make", using: { v: 0 } }, { _obj: "set", to: { list: [{ c: 4 }] } }]);
 });
 
+test("applyParams accepts a recorded {set, fields} without make (set. roots only)", () => {
+  const rec = { set: { _obj: "set", to: { a: { _unit: "percentUnit", _value: 1 }, list: [{ i: 0 }] } }, fields: { a: "set.to.a", i: "set.to.list.0.i" } };
+  assert.deepEqual(edit.applyParams(rec, { a: 40, i: 2 }), [{ _obj: "set", to: { a: { _unit: "percentUnit", _value: 40 }, list: [{ i: 2 }] } }]);
+  assert.equal(rec.set.to.a._value, 1, "template not mutated");
+  assert.throws(() => edit.applyParams({ set: { _obj: "set", to: {} }, fields: { a: "make.to" } }, { a: 1 }), (e) => e.code === "RECORDED_INVALID");
+  assert.throws(() => edit.applyParams({ set: "x", fields: {} }), (e) => e.code === "RECORDED_INVALID");
+});
+
 test("curves above a layer, clipped and renamed, in one step", async () => {
   const ps = makeStub();
   const points = { rgb: [[0, 0], [128, 121], [255, 255]] };

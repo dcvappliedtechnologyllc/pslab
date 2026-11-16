@@ -75,4 +75,34 @@ describe("design tools over MCP", () => {
     }
     expect(seen).toEqual([]);
   });
+
+  // ---------- add_layer_style ----------
+
+  it("add_layer_style forwards params (empty by default) and is a set tool", async () => {
+    let res = await run("add_layer_style", { layer: 3, style: "drop_shadow" });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "add_layer_style", args: { layer: 3, style: "drop_shadow", params: {} } }]);
+    seen = [];
+    const params = { color: { r: 0, g: 0, b: 0 }, opacity: 40, angle: 120, distance_px: 6, spread_pct: 10, size_px: 12, blend: "multiply" };
+    res = await run("add_layer_style", { doc: 1, layer: 3, style: "drop_shadow", params });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "add_layer_style", args: { doc: 1, layer: 3, style: "drop_shadow", params } }]);
+    const t = await tool("add_layer_style");
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(t.description).toContain("kept");
+    expect(t.description).toContain("PROTECTED_LAYER");
+  });
+
+  it("add_layer_style rejects unknown params, out-of-range values and unknown styles in the schema", async () => {
+    for (const extra of [
+      { style: "drop_shadow", params: { glow: 1 } },
+      { style: "drop_shadow", params: { opacity: 120 } },
+      { style: "drop_shadow", params: { blend: "dissolve" } },
+      { style: "bevel" },
+    ]) {
+      const res = await run("add_layer_style", { layer: 3, ...extra });
+      expect(res.isError, JSON.stringify(extra)).toBe(true);
+    }
+    expect(seen).toEqual([]);
+  });
 });

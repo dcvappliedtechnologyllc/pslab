@@ -5,7 +5,8 @@ const D = require("../descriptors");
 const { bp } = require("../step");
 const { findLayer, resolveDoc, safe, layerBounds } = require("../doc");
 const { lineRect } = require("../layout");
-const { codedError, stepIn, applyParams } = require("./edit");
+const { codedError, stepIn, applyParams, requireLayer, isProtectedLayer } = require("./edit");
+const E = require("../effects");
 const { requireAnchor, selectAnchor } = require("../place");
 const defaultRecorded = require("../recorded/index");
 
@@ -152,4 +153,92 @@ async function add_shape(ps, args = {}) {
   });
 }
 
-module.exports = { add_shape, setRecorded };
+// ---------- layer styles ----------
+
+const STYLES = ["drop_shadow"];
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const nameOf = (layer) => String(safe(() => layer.name, ""));
+
+// The layer's current layerEffects descriptor, or null when it has none (or
+// it cannot be read). A read: runs outside any modal scope.
+async function readEffects(ps, d, id) {
+  let res;
+  try {
+    res = await ps.action.batchPlay(
+      [
+        {
+          _obj: "get",
+          _target: [{ _property: "layerEffects" }, { _ref: "layer", _id: id }, { _ref: "document", _id: d.id }],
+          _options: { dialogOptions: "dontDisplay" },
+        },
+      ],
+      { synchronousExecution: true },
+    );
+  } catch {
+    return null;
+  }
+  const r = res && res[0];
+  if (!r || r._obj === "error" || !isObj(r.layerEffects)) return null;
+  return r.layerEffects;
+}
+
+// Checks shared by the layer-style tools: a known style, a layer that can
+// carry effects (never the Background).
+function styleTarget(ps, args) {
+  if (!STYLES.includes(args.style)) throw invalid(`style must be one of ${STYLES.join(", ")}, got ${args.style}`);
+  const { d } = resolveDoc(ps, args.doc);
+  const layer = requireLayer(d, args.layer);
+  if (isProtectedLayer(layer)) {
+    throw codedError("PROTECTED_LAYER", `Layer ${layer.id} (${nameOf(layer)}) is the Background layer, which cannot carry layer styles`);
+  }
+  return { d, layer };
+}
+
+function shadowRecording() {
+  const rec = recordedMap().drop_shadow;
+  if (!usable(rec)) throw codedError("NOT_SUPPORTED", "drop_shadow needs a recorded descriptor, and none is available");
+  return rec;
+}
+
+// The `set layerEffects` descriptor: the recorded drop shadow (or, with
+// keepCurrent, the layer's current one over it) with full params applied,
+// merged into the layer's other effects. The scale is the existing one, else
+// 100 * ppi / 72. Use Global Light is always off (angle is per layer).
+function shadowSet(rec, existing, full, { keepCurrent = false, enabled, ppi } = {}) {
+  const template = clone(rec);
+  if (keepCurrent && existing && isObj(existing.dropShadow)) {
+    template.set.to.dropShadow = { ...template.set.to.dropShadow, ...clone(existing.dropShadow) };
+  }
+  const fields = { ...template.fields };
+  // a colour we cannot read (not RGB) stays as it is unless one is given
+  if (!full.color) for (const k of ["color_r", "color_g", "color_b"]) delete fields[k];
+  else if (template.set.to.dropShadow.color && template.set.to.dropShadow.color._obj !== "RGBColor") {
+    template.set.to.dropShadow.color = clone(rec.set.to.dropShadow.color);
+  }
+  template.fields = fields;
+  const existingScale = existing && existing.scale;
+  const scale = isObj(existingScale) && isNum(existingScale._value) ? existingScale._value : E.effectsScale(ppi);
+  const [set] = applyParams(template, E.flatShadow(full, scale));
+  const shadow = set.to.dropShadow;
+  shadow.mode = { _enum: "blendMode", _value: E.blendValue(full.blend) };
+  shadow.useGlobalAngle = false;
+  if (enabled !== undefined) shadow.enabled = enabled;
+  set.to = { ...E.mergeEffects(existing, "dropShadow", shadow), scale: set.to.scale };
+  return set;
+}
+
+async function add_layer_style(ps, args = {}) {
+  const params = args.params === undefined ? {} : args.params;
+  E.validateShadowParams(params);
+  const { d, layer } = styleTarget(ps, args);
+  const rec = shadowRecording();
+  const existing = await readEffects(ps, d, layer.id);
+  const full = E.shadowParams(params);
+  const desc = shadowSet(rec, existing, full, { enabled: true, ppi: Number(safe(() => d.resolution, 72)) });
+  return stepIn(ps, `Claude: add_layer_style, ${args.style} ${nameOf(layer)}`, d, async () => {
+    await bp(ps, [D.selectLayerById(layer.id), desc]);
+    return { ok: true, layer_id: layer.id, style: args.style, applied: full };
+  });
+}
+
+module.exports = { add_shape, add_layer_style, setRecorded, readEffects };

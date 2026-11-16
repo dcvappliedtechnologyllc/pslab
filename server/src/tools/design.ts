@@ -10,6 +10,24 @@ const point = z.object({ x: z.number(), y: z.number() });
 const channel = z.number().int().min(0).max(255);
 const color = z.object({ r: channel, g: channel, b: channel });
 
+const BLENDS = [
+  "normal", "multiply", "screen", "overlay", "darken", "lighten",
+  "color_burn", "linear_burn", "color_dodge", "linear_dodge", "soft_light", "hard_light",
+] as const;
+
+/** Drop shadow settings; every field optional (add_layer_style fills defaults, set_layer_style keeps current values). */
+const shadowParams = z
+  .object({
+    color: color.optional().describe("Shadow colour r/g/b 0..255; add default black"),
+    opacity: z.number().min(0).max(100).optional().describe("Opacity percent 0..100; add default 35"),
+    angle: z.number().min(-180).max(180).optional().describe("Light angle in degrees (Photoshop's dial; 120 = light from the upper left, shadow down-right); add default 120"),
+    distance_px: z.number().min(0).max(30000).optional().describe("Shadow offset in pixels; add default 6"),
+    spread_pct: z.number().min(0).max(100).optional().describe("Spread percent 0..100 (the dialog's Spread); add default 0"),
+    size_px: z.number().min(0).max(250).optional().describe("Blur size in pixels 0..250; add default 10"),
+    blend: z.enum(BLENDS).optional().describe("Blend mode; add default multiply"),
+  })
+  .strict();
+
 async function call(bridge: PluginBridge, action: string, args: unknown) {
   try {
     return toolResult(await bridge.call(action, args));
@@ -57,5 +75,27 @@ export function registerDesignTools(server: McpServer, bridge: PluginBridge): vo
       }
       return call(bridge, "add_shape", args);
     },
+  );
+
+  server.registerTool(
+    "add_layer_style",
+    {
+      annotations: hints.set,
+      description:
+        "Add a layer style to a layer in doc (Layer > Layer Style). style drop_shadow with params: color {r,g,b}, " +
+        "opacity (default 35), angle (default 120; Use Global Light is off, so each layer keeps its own angle), " +
+        "distance_px (default 6), spread_pct (default 0), size_px (default 10), blend (default multiply). The layer's " +
+        "other effects (stroke, glow) are kept; an existing drop shadow is replaced, so the same call gives the same " +
+        "result. The effect scales with the document resolution like Photoshop's own dialog. Works on text, shape and " +
+        "pixel layers; the Background is refused (PROTECTED_LAYER). Bounds in get_document ignore effects. Returns " +
+        "layer_id, style and applied (the full settings used). One undoable history step.",
+      inputSchema: {
+        doc: docArg,
+        layer: layerId.describe("The layer to style"),
+        style: z.enum(["drop_shadow"]),
+        params: shadowParams.default({}).describe("Style settings; omitted ones take the defaults"),
+      },
+    },
+    async (args) => call(bridge, "add_layer_style", args),
   );
 }

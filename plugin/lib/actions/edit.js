@@ -85,21 +85,25 @@ const isDescriptor = (v) => isObj(v) && typeof v._obj === "string";
 const invalid = (message) => codedError("RECORDED_INVALID", `Recorded descriptor invalid: ${message}`);
 
 // recorded = {make, set?, fields: {param: "make.<path>" | "set.<path>"}} -> [make, set?]
-// with every field set to params[param] (0 when absent). A field holding a
-// unit value ({_unit,_value}) keeps its unit.
+// or {set, fields: {param: "set.<path>"}} -> [set] (an edit of an existing
+// layer: layer style, smart filter), with every field set to params[param]
+// (0 when absent). A field holding a unit value ({_unit,_value}) keeps its unit.
 function applyParams(recorded, params = {}) {
   if (!isObj(recorded)) throw invalid("not an object");
-  if (!isDescriptor(recorded.make)) throw invalid("make must be a descriptor");
+  const hasMake = recorded.make !== undefined;
+  if (hasMake && !isDescriptor(recorded.make)) throw invalid("make must be a descriptor");
   if (recorded.set !== undefined && !isDescriptor(recorded.set)) throw invalid("set must be a descriptor");
+  if (!hasMake && recorded.set === undefined) throw invalid("make (or set) must be a descriptor");
   if (!isObj(recorded.fields)) throw invalid("fields must be an object");
-  const out = { make: JSON.parse(JSON.stringify(recorded.make)) };
+  const out = {};
+  if (hasMake) out.make = JSON.parse(JSON.stringify(recorded.make));
   if (recorded.set !== undefined) out.set = JSON.parse(JSON.stringify(recorded.set));
   for (const [param, path] of Object.entries(recorded.fields)) {
     if (typeof path !== "string") throw invalid(`path for ${param} must be a string`);
     const keys = path.split(".");
     const root = keys.shift();
     if (!Object.prototype.hasOwnProperty.call(out, root) || keys.length === 0) {
-      throw invalid(`path ${path} must start with make. or set.`);
+      throw invalid(`path ${path} must start with ${Object.keys(out).map((k) => `${k}.`).join(" or ")}`);
     }
     let node = out[root];
     for (const k of keys.slice(0, -1)) {
@@ -112,7 +116,7 @@ function applyParams(recorded, params = {}) {
     const v = num(params, param);
     node[leaf] = isObj(node[leaf]) && "_unit" in node[leaf] ? { ...node[leaf], _value: v } : v;
   }
-  return out.set ? [out.make, out.set] : [out.make];
+  return [out.make, out.set].filter(Boolean);
 }
 
 // ---------- add_adjustment ----------
