@@ -50,6 +50,7 @@ describe("design tools over MCP", () => {
     expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
     expect(t.description).toContain("vector");
     expect(t.description).toContain("pixel layer");
+    expect(t.description).toContain("selection is cleared");
   });
 
   it("add_shape forwards a line", async () => {
@@ -120,6 +121,8 @@ describe("design tools over MCP", () => {
     const t = await tool("set_layer_style");
     expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
     expect(t.description).toContain("NO_STYLE");
+    expect(t.description).toContain("collapsed to one");
+    expect(t.description).toContain("Use Global Light");
   });
 
   it("set_layer_style refuses a call with nothing to change", async () => {

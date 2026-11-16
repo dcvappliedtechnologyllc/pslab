@@ -49,7 +49,8 @@ export function registerDesignTools(server: McpServer, bridge: PluginBridge): vo
         "filled with color {r,g,b} 0..255, at opacity (0..100, default 100). It lands above the active layer, or " +
         "directly above the layer id given as above (inside that layer's group, if any; never clipped). Photoshop " +
         "first tries a vector shape layer (crisp at any scale); if that is refused it paints a pixel layer instead. " +
-        "Returns layer_id, kind, vector (true = shape layer, false = pixel layer) and bounds. One undoable history step.",
+        "Any active selection is cleared. Returns layer_id, kind, vector (true = shape layer, false = pixel layer) " +
+        "and bounds. One undoable history step.",
       inputSchema: {
         doc: docArg,
         kind: z.enum(["rect", "ellipse", "line"]),
@@ -125,7 +126,8 @@ export function registerDesignTools(server: McpServer, bridge: PluginBridge): vo
         "params holds only the settings to change (color, opacity, angle, distance_px, spread_pct, size_px, blend); " +
         "the rest keep their current values. enabled: false hides the shadow and true shows it again, without " +
         "changing its settings. A shadow that follows Use Global Light keeps it unless angle is given (then it gets " +
-        "that angle of its own). The layer's other effects are kept. NO_STYLE when the layer has no drop shadow (use " +
+        "that angle of its own). A stack of several drop shadows is collapsed to one (the first, changed). The " +
+        "layer's other effects are kept. NO_STYLE when the layer has no drop shadow (use " +
         "add_layer_style). Returns layer_id, style, applied (the full settings now in effect) and enabled. One " +
         "undoable history step.",
       inputSchema: {
