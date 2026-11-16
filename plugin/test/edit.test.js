@@ -270,6 +270,35 @@ test("add_pixel_layer makes a named layer and returns its id", async () => {
   assert.deepEqual(allDescs(ps).map(strip), [{ _obj: "make", _target: [{ _ref: "layer" }], using: { _obj: "layer", name: "Paint" } }]);
 });
 
+test("add_pixel_layer with above selects the anchor by id before make", async () => {
+  const ps = makeStub();
+  const r = await edit.add_pixel_layer(ps, { name: "P", above: 10 });
+  assert.deepEqual(r, { layer_id: 100 });
+  assert.equal(historyName(ps), "Claude: add_pixel_layer, P");
+  assert.deepEqual(allDescs(ps).map(strip), [
+    { _obj: "select", _target: [{ _ref: "layer", _id: 10 }], makeVisible: false },
+    { _obj: "make", _target: [{ _ref: "layer" }], using: { _obj: "layer", name: "P" } },
+  ]);
+});
+
+test("add_pixel_layer with a missing above layer fails NO_LAYER before any step", async () => {
+  const ps = makeStub();
+  await assert.rejects(edit.add_pixel_layer(ps, { name: "P", above: 404 }), { code: "NO_LAYER" });
+  assert.equal(modalCount(ps), 0);
+});
+
+test("add_pixel_layer above a clipped layer releases the new layer from the clip", async () => {
+  const ps = makeStub();
+  const make = ps.action.batchPlay;
+  ps.action.batchPlay = async (descs) => {
+    const out = await make(descs);
+    if (descs.some((x) => x._obj === "make")) ps.doc.activeLayers[0].isClippingMask = true;
+    return out;
+  };
+  await edit.add_pixel_layer(ps, { name: "P", above: 11 });
+  assert.equal(ps.doc.layers.find((l) => l.id === 100).isClippingMask, false);
+});
+
 // ---------- masks ----------
 
 test("mask_from_polygon writes 1-component grayscale", async () => {

@@ -8,6 +8,7 @@ const { readPixels } = require("./see");
 const { bitsOf, findLayer, kindOverrides, resolveDoc, hasUserMaskStrict } = require("../doc");
 const { rasterizeStrokes, polygonMask, imageDataFromMask } = require("../raster");
 const defaultRecorded = require("../recorded/index");
+const { requireAnchor, selectAnchor } = require("../place");
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -255,13 +256,23 @@ async function add_adjustment(ps, args = {}) {
 
 async function add_pixel_layer(ps, args = {}) {
   const { d } = resolveDoc(ps, args.doc);
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(d, args.above);
   const using = { _obj: "layer" };
   if (args.name !== undefined) using.name = args.name;
   const name = args.name !== undefined ? `Claude: add_pixel_layer, ${args.name}` : "Claude: add_pixel_layer";
   return runStep(ps, name, d.id, async () => {
     await activate(ps, d);
+    // a make lands directly above the selected layer
+    if (hasAbove) await selectAnchor(ps, args.above);
     await bp(ps, [{ _obj: "make", _target: [{ _ref: "layer" }], using }]);
-    return { layer_id: newLayerId(ps) };
+    const id = newLayerId(ps);
+    if (hasAbove) {
+      // made above a clipped layer, the new one joins the clip: release it
+      const layer = findLayer(d, id);
+      if (layer && safeRead(() => layer.isClippingMask, false) === true) layer.isClippingMask = false;
+    }
+    return { layer_id: id };
   });
 }
 

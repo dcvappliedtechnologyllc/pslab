@@ -206,10 +206,14 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
     "add_pixel_layer",
     {
       annotations: hints.add,
-      description: "Add an empty pixel layer with the given name (one undoable history step) and return its layer_id.",
+      description:
+        "Add an empty pixel layer with the given name (one undoable history step) and return its layer_id. It goes " +
+        "directly above the layer id given as above (inside that layer's group, if any; never clipped), else above " +
+        "the active layer.",
       inputSchema: {
         doc: z.number().int().optional().describe("Document id; defaults to the active document"),
         name: z.string().min(1).describe("Layer name"),
+        above: layerId.optional().describe("Layer id the new layer goes directly above; default: above the active layer"),
       },
     },
     forward(bridge, "add_pixel_layer"),

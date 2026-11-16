@@ -127,6 +127,13 @@ describe("edit tools over MCP", () => {
     ]);
   });
 
+  it("add_pixel_layer forwards above and describes it", async () => {
+    await client.callTool({ name: "add_pixel_layer", arguments: { name: "P", above: 3 } });
+    expect(seen).toEqual([{ action: "add_pixel_layer", args: { name: "P", above: 3 } }]);
+    const { tools } = await client.listTools();
+    expect(tools.find((t) => t.name === "add_pixel_layer")!.description).toContain("directly above");
+  });
+
   it("mask_from_polygon, mask_from_subject, paint_mask and set_layer forward doc", async () => {
     const bbox = { left: 1, top: 2, right: 30, bottom: 40 };
     const points = [{ x: 0, y: 0 }, { x: 5, y: 5 }, { x: 0, y: 5 }];
