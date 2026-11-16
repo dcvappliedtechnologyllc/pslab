@@ -161,8 +161,9 @@ async function add_shape(ps, args = {}) {
     if (layer) {
       layer.name = name;
       if (opacity !== undefined) layer.opacity = opacity;
-      // made above a clipped layer, the new one joins the clip: release it
-      if (hasAbove && safe(() => layer.isClippingMask, false) === true) layer.isClippingMask = false;
+      // made above a clipped layer (the anchor or the active one), the new one
+      // joins the clip: release it
+      if (safe(() => layer.isClippingMask, false) === true) layer.isClippingMask = false;
     }
     return { layer_id: id, kind, vector, bounds: layer ? layerBounds(layer) : null };
   });

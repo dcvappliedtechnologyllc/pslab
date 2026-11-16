@@ -85,12 +85,15 @@ function makeStub(opts = {}) {
               else out.push({});
               continue;
             }
-            const l = mk(nextId++, "Rectangle 1", { kind: "solidColor", boundsNoEffects: edges(x.using.shape) });
+            // like Photoshop, a layer made above a clipped layer joins the clip
+            const clip = !!(doc.activeLayers[0] && doc.activeLayers[0].isClippingMask);
+            const l = mk(nextId++, "Rectangle 1", { kind: "solidColor", boundsNoEffects: edges(x.using.shape), isClippingMask: clip });
             doc.layers.unshift(l);
             doc.activeLayers = [l];
           }
           if (x._obj === "make" && x._target[0]._ref === "layer") {
-            const l = mk(nextId++, x.using.name || "Layer 1");
+            const clip = !!(doc.activeLayers[0] && doc.activeLayers[0].isClippingMask);
+            const l = mk(nextId++, x.using.name || "Layer 1", { isClippingMask: clip });
             doc.layers.unshift(l);
             doc.activeLayers = [l];
           }
@@ -237,6 +240,15 @@ test("add_shape raster ellipse uses an ellipse selection; raster diagonal line a
   assert.equal(poly.to.points.length, 4);
   assert.equal(bpDescs(ps).some((x) => x._obj === "transform"), false, "raster lines are never resampled");
   assert.equal(r.vector, false);
+});
+
+test("add_shape releases the clip without above too (the active layer is clipped)", async () => {
+  for (const vectorFails of [false, true]) {
+    const ps = makeStub({ vectorFails });
+    ps.doc.activeLayers = [ps.byId(4)];
+    const r = await design.add_shape(ps, { doc: 1, kind: "rect", bbox: { left: 0, top: 0, right: 10, bottom: 10 }, color: WHITE, name: "R" });
+    assert.equal(ps.byId(r.layer_id).isClippingMask, false, `vectorFails ${vectorFails}`);
+  }
 });
 
 test("add_shape uses the raster path when no shape descriptor is available", async () => {
