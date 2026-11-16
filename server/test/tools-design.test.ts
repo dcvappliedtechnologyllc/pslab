@@ -127,4 +127,15 @@ describe("design tools over MCP", () => {
     expect(res.isError).toBe(true);
     expect(seen).toEqual([]);
   });
+
+  // ---------- clear_layer_style ----------
+
+  it("clear_layer_style forwards the layer and is a set tool, not destructive", async () => {
+    const res = await run("clear_layer_style", { doc: 1, layer: 3 });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "clear_layer_style", args: { doc: 1, layer: 3 } }]);
+    const t = await tool("clear_layer_style");
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(t.description).toContain("undoable");
+  });
 });

@@ -100,6 +100,23 @@ export function registerDesignTools(server: McpServer, bridge: PluginBridge): vo
   );
 
   server.registerTool(
+    "clear_layer_style",
+    {
+      annotations: hints.set,
+      description:
+        "Remove every layer style (drop shadow, stroke, glow and any other effect) from a layer in doc " +
+        "(Layer > Layer Style > Clear Layer Style). Pixels and the layer itself are untouched, and it is undoable. " +
+        "A layer without effects is left alone (cleared: false, no history state). Returns layer_id, cleared and " +
+        "removed (the effect names that were on the layer). One undoable history step.",
+      inputSchema: {
+        doc: docArg,
+        layer: layerId.describe("The layer to clear"),
+      },
+    },
+    async (args) => call(bridge, "clear_layer_style", args),
+  );
+
+  server.registerTool(
     "set_layer_style",
     {
       annotations: hints.set,

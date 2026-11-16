@@ -378,3 +378,37 @@ test("set_layer_style: NO_STYLE without a shadow, NOTHING_TO_CHANGE without para
   await assert.rejects(design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: { blur: 1 } }), { code: "INVALID_ARGS" });
   assert.equal(modalCount(ps), 0);
 });
+
+// ---------- clear_layer_style ----------
+
+test("clear_layer_style plays the recorded disableLayerStyle on the selected layer, one step", async () => {
+  const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), frameFX: STROKE, dropShadow: CURRENT_SHADOW } }) });
+  const r = await design.clear_layer_style(ps, { doc: 1, layer: 3 });
+  assert.deepEqual(r, { ok: true, layer_id: 3, cleared: true, removed: ["frameFX", "dropShadow"] });
+  assert.equal(modalCount(ps), 1);
+  assert.equal(historyName(ps), "Claude: clear_layer_style, Title");
+  const descs = bpDescs(ps).slice(1).map(strip);
+  assert.deepEqual(descs, [
+    { _obj: "select", _target: [{ _ref: "layer", _id: 3 }], makeVisible: false },
+    { _obj: "disableLayerStyle", _target: [{ _ref: "layer", _enum: "ordinal", _value: "targetEnum" }] },
+  ]);
+});
+
+test("clear_layer_style without effects changes nothing and makes no step", async () => {
+  const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100) } }) });
+  assert.deepEqual(await design.clear_layer_style(ps, { doc: 1, layer: 3 }), { ok: true, layer_id: 3, cleared: false, removed: [] });
+  assert.deepEqual(await design.clear_layer_style(ps, { doc: 1, layer: 4 }), { ok: true, layer_id: 4, cleared: false, removed: [] });
+  assert.equal(modalCount(ps), 0);
+  await assert.rejects(design.clear_layer_style(ps, { doc: 1, layer: 404 }), { code: "NO_LAYER" });
+});
+
+test("clear_layer_style without a recording sets layerEffects with every effect removed", async () => {
+  design.setRecorded({ clear_layer_style: null });
+  try {
+    const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(300), frameFX: STROKE } }) });
+    await design.clear_layer_style(ps, { doc: 1, layer: 3 });
+    assert.deepEqual(styleSet(ps).to, { _obj: "layerEffects", scale: pct(300) });
+  } finally {
+    design.setRecorded(null);
+  }
+});

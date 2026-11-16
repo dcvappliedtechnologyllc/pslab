@@ -274,4 +274,29 @@ async function set_layer_style(ps, args = {}) {
   });
 }
 
-module.exports = { add_shape, add_layer_style, set_layer_style, setRecorded, readEffects };
+// clear_layer_style without a recording: set layerEffects with every effect
+// removed (only the scale left).
+function clearAllEffects(existing) {
+  const to = E.effectKeys(existing).reduce((le, k) => E.mergeEffects(le, k, null), existing);
+  return {
+    _obj: "set",
+    _target: [{ _ref: "property", _property: "layerEffects" }, { _ref: "layer", _enum: "ordinal", _value: "targetEnum" }],
+    to,
+  };
+}
+
+async function clear_layer_style(ps, args = {}) {
+  const { d } = resolveDoc(ps, args.doc);
+  const layer = requireLayer(d, args.layer);
+  const existing = await readEffects(ps, d, layer.id);
+  if (!E.hasEffects(existing)) return { ok: true, layer_id: layer.id, cleared: false, removed: [] };
+  const removed = E.effectKeys(existing);
+  const rec = recordedMap().clear_layer_style;
+  const desc = usable(rec) && typeof rec._obj === "string" ? clone(rec) : clearAllEffects(existing);
+  return stepIn(ps, `Claude: clear_layer_style, ${nameOf(layer)}`, d, async () => {
+    await bp(ps, [D.selectLayerById(layer.id), desc]);
+    return { ok: true, layer_id: layer.id, cleared: true, removed };
+  });
+}
+
+module.exports = { add_shape, add_layer_style, set_layer_style, clear_layer_style, setRecorded, readEffects };

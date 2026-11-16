@@ -55,4 +55,5 @@ module.exports = {
   add_shape: design.add_shape,
   add_layer_style: design.add_layer_style,
   set_layer_style: design.set_layer_style,
+  clear_layer_style: design.clear_layer_style,
 };
