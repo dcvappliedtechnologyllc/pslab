@@ -1,12 +1,16 @@
 // Read-only actions.
-const { docSummary, resolveDoc } = require("../doc");
+const { docSummary, resolveDoc, modalState } = require("../doc");
+const { modalHint } = require("./dev");
 const { runRead } = require("../step");
 const { regionStats, clampBbox } = require("../stats");
 
 async function get_document(ps, args = {}) {
   const { d, docs } = resolveDoc(ps, args.doc);
+  // Probed before the tree is read: during a crop the tree shows "Crop Preview".
+  const modal = await modalState(ps, d, modalHint());
   return {
     ...(await docSummary(ps, d, { detail: true })),
+    modal,
     open_docs: docs.map((x) => ({ id: x.id, name: x.name })),
   };
 }

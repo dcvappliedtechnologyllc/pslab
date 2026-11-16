@@ -280,6 +280,71 @@ async function hasUserMaskStrict(ps, docId, layerId) {
   return r.hasUserMask;
 }
 
+// ---------- modal state ----------
+
+const PROBE_TIMEOUT_S = 1;
+
+function hasLayerNamed(doc, name) {
+  return collectLayers(safe(() => doc.layers, null)).some((l) => safe(() => l.name, "") === name);
+}
+
+// The kind for Photoshop's current tool while it is modal; null if unreadable.
+async function toolKind(ps) {
+  try {
+    const res = await ps.action.batchPlay(
+      [{
+        _obj: "get",
+        _target: [{ _property: "tool" }, { _ref: "application", _enum: "ordinal", _value: "targetEnum" }],
+        _options: { dialogOptions: "dontDisplay" },
+      }],
+      { synchronousExecution: true },
+    );
+    const t = res && res[0] && res[0].tool;
+    const id = t && typeof t === "object" ? t._value || t._enum || t.ID : t;
+    if (typeof id !== "string" || id === "") return null;
+    if (id === "cropTool") return "crop";
+    if (id === "typeCreateOrEditTool" || id === "typeVerticalCreateOrEditTool") return "text";
+    return "transform";
+  } catch {
+    return null;
+  }
+}
+
+// null when a modal scope can be entered; otherwise what holds Photoshop:
+// "crop" | "text" | "transform" | "dialog" | "busy" (another plugin, error 9) | "unknown".
+// hint: what Photoshop's own modal events say (dev.modalHint()), used only
+// once the probe has failed; the probe is the source of truth.
+async function modalState(ps, doc, hint = null) {
+  try {
+    await ps.core.executeAsModal(async () => {}, {
+      commandName: "pslab modal probe",
+      interactive: false,
+      timeOut: PROBE_TIMEOUT_S,
+    });
+    return null;
+  } catch (e) {
+    try {
+      if (doc && hasLayerNamed(doc, "Crop Preview")) return "crop";
+      if (e && e.number === 9) return "busy";
+      if (hint) return hint;
+      return (await toolKind(ps)) || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+}
+
+function modalBusy(kind) {
+  const e = new Error(`Photoshop is in a modal state (${kind}); commit or cancel it, then retry`);
+  e.code = "MODAL_BUSY";
+  return e;
+}
+
+async function requireNotModal(ps, doc, hint = null) {
+  const kind = await modalState(ps, doc, hint);
+  if (kind) throw modalBusy(kind);
+}
+
 function noDocument(message) {
   const e = new Error(message);
   e.code = "NO_DOCUMENT";
@@ -319,4 +384,5 @@ async function selectLayer(ps, doc, id) {
 module.exports = {
   bitsOf, docSummary, findLayer, kindOverrides, selectLayer, hasUserMask, hasUserMaskStrict, resolveDoc,
   normEdges, normBounds, layerBounds, textInfo, safe,
+  modalState, requireNotModal, modalBusy,
 };

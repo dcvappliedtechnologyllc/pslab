@@ -23,7 +23,10 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
         "result.open_docs. Each layer has bounds {left, top, right, bottom} (pixels, without effects such as a drop " +
         "shadow; null for an empty layer or an adjustment without a mask) and maskEnabled (null when the layer has no " +
         "mask; false means the mask exists but is switched off, so the layer acts unmasked). Text layers also carry " +
-        "text {content, font, style, size_pt, color {r,g,b}, justification}. Pass doc to target a document other than " +
+        "text {content, font, style, size_pt, color {r,g,b}, justification}. doc.modal is null normally; while " +
+        'Photoshop is modal it names what holds it ("crop", "transform", "text", "dialog", "busy" for another ' +
+        'plugin, or "unknown"). A non-null modal means the layer tree may show "Crop Preview" and a provisional ' +
+        "width, and every other tool answers MODAL_BUSY: ask the user to finish or cancel it in Photoshop first. Pass doc to target a document other than " +
         "the active one. All coordinates everywhere are image pixels.",
       inputSchema: { doc: z.number().int().optional().describe("Document id; defaults to the active document") },
     },

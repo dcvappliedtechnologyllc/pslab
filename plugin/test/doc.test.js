@@ -36,6 +36,11 @@ function makeStub({ docs = [], masked = [], disabled = [], enabledThrows = false
   const calls = [];
   return {
     calls,
+    core: {
+      async executeAsModal(fn) {
+        return fn({});
+      },
+    },
     app: {
       documents: docs,
       get activeDocument() {
@@ -182,6 +187,7 @@ test("get_document returns the active document summary plus open_docs", async ()
   const b = makeDoc(11, "other.psd", [layer(1, "Bg")]);
   const r = await get_document(makeStub({ docs: [a, b] }), {});
   assert.equal(r.id, 10);
+  assert.equal(r.modal, null);
   assert.equal(r.layers.length, 3);
   assert.deepEqual(r.open_docs, [
     { id: 10, name: "photo.psd" },
@@ -372,4 +378,14 @@ test("a failed text read is null, the rest still reads; fontStyle wins over the 
   const doc = makeDoc(10, "t.psd", [textLayer(1, { textItem: item })]);
   const s = await docSummary(makeStub({ docs: [doc] }), doc, { detail: true });
   assert.deepEqual(s.layers[0].text, { content: "Hi", font: "Arial", style: "Italic", size_pt: 12, color: null, justification: null });
+});
+
+test("get_document reports modal: crop while a crop is open (probe fails, Crop Preview layer)", async () => {
+  const doc = makeDoc(10, "c.psd", [layer(5, "Crop Preview"), layer(1, "Background")]);
+  const ps = makeStub({ docs: [doc] });
+  ps.core.executeAsModal = async () => {
+    throw new Error("modal");
+  };
+  const r = await get_document(ps, {});
+  assert.equal(r.modal, "crop");
 });

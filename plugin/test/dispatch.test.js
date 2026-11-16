@@ -113,3 +113,87 @@ test("the summary follows args.doc (or dst_doc), else the active document", asyn
   assert.equal((await dispatch(req("r-3", "noop", {}))).doc.id, 1);
   assert.equal((await dispatch(req("r-4", "noop", { doc: 99 }))).doc.id, 1);
 });
+
+// ---------- A2: MODAL_BUSY rewrite ----------
+
+const { modalState } = require("../lib/doc");
+
+function modalPs({ probeThrows, layers = [], tool = null, number } = {}) {
+  const doc = { id: 1, name: "a.psd", layers };
+  const probes = [];
+  return {
+    probes,
+    app: { activeDocument: doc, documents: [doc] },
+    core: {
+      async executeAsModal(fn, opts) {
+        probes.push(opts);
+        if (probeThrows) throw Object.assign(new Error("modal"), number !== undefined ? { number } : {});
+        return fn({});
+      },
+    },
+    action: {
+      async batchPlay(descs) {
+        if (tool === null) throw new Error("no tool read");
+        return descs.map(() => ({ tool: { _enum: "tool", _value: tool } }));
+      },
+    },
+  };
+}
+
+const noLayer = async () => {
+  throw Object.assign(new Error("No layer with id 7"), { code: "NO_LAYER" });
+};
+
+test("NO_LAYER during a crop becomes MODAL_BUSY (crop), probed once with a short timeout", async () => {
+  const p = modalPs({ probeThrows: true, layers: [{ id: 9, name: "Crop Preview" }, { id: 1, name: "Background" }] });
+  const dispatch = createDispatcher(p, { set_layer: noLayer }, { docSummary: summary, modalState: (x, d) => modalState(x, d) });
+  const r = await dispatch(req("r-1", "set_layer", { layer: 7 }));
+  assert.equal(r.ok, false);
+  assert.equal(r.error.code, "MODAL_BUSY");
+  assert.match(r.error.message, /modal state \(crop\)/);
+  assert.match(r.error.message, /commit or cancel/);
+  assert.equal(p.probes.length, 1);
+  assert.equal(p.probes[0].timeOut, 1);
+  assert.equal(p.probes[0].commandName, "pslab modal probe");
+});
+
+test("a probe that resolves leaves NO_LAYER as is", async () => {
+  const p = modalPs({ probeThrows: false });
+  const dispatch = createDispatcher(p, { set_layer: noLayer }, { docSummary: summary, modalState: (x, d) => modalState(x, d) });
+  const r = await dispatch(req("r-1", "set_layer", { layer: 7 }));
+  assert.deepEqual(r.error, { code: "NO_LAYER", message: "No layer with id 7" });
+});
+
+test("errors outside the modal-suspect set are never probed; no hook means no probe", async () => {
+  const p = modalPs({ probeThrows: true });
+  const bad = async () => {
+    throw Object.assign(new Error("bad"), { code: "INVALID_ARGS" });
+  };
+  const dispatch = createDispatcher(p, { bad, set_layer: noLayer }, { docSummary: summary, modalState: (x, d) => modalState(x, d) });
+  assert.equal((await dispatch(req("r-1", "bad", {}))).error.code, "INVALID_ARGS");
+  assert.equal(p.probes.length, 0);
+  const plain = createDispatcher(p, { set_layer: noLayer }, { docSummary: summary });
+  assert.equal((await plain(req("r-2", "set_layer", {}))).error.code, "NO_LAYER");
+  assert.equal(p.probes.length, 0);
+});
+
+test("modalState classifies by tool, hint, busy (error 9) and unknown", async () => {
+  assert.equal(await modalState(modalPs({ probeThrows: false }), null), null);
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "cropTool" }), null), "crop");
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "typeCreateOrEditTool" }), null), "text");
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "typeVerticalCreateOrEditTool" }), null), "text");
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "moveTool" }), null), "transform");
+  assert.equal(await modalState(modalPs({ probeThrows: true, number: 9, tool: "moveTool" }), null), "busy");
+  assert.equal(await modalState(modalPs({ probeThrows: true }), null), "unknown");
+  // a hint from Photoshop's modal events wins over the tool read
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "moveTool" }), null, "dialog"), "dialog");
+});
+
+test("requireNotModal throws MODAL_BUSY with the kind, and passes when not modal", async () => {
+  const { requireNotModal } = require("../lib/doc");
+  await requireNotModal(modalPs({ probeThrows: false }), null);
+  await assert.rejects(requireNotModal(modalPs({ probeThrows: true, tool: "cropTool" }), null), {
+    code: "MODAL_BUSY",
+    message: "Photoshop is in a modal state (crop); commit or cancel it, then retry",
+  });
+});

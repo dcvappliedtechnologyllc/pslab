@@ -1,6 +1,6 @@
 // Panel entry: WebSocket client to the pslab server, request dispatch, reconnect.
 const { makePs, pluginVersion, hostVersion } = require("./lib/ps");
-const { docSummary } = require("./lib/doc");
+const { docSummary, modalState } = require("./lib/doc");
 const { createDispatcher, errorFrame } = require("./lib/dispatch");
 const dev = require("./lib/actions/dev");
 const actions = require("./lib/actions/index");
@@ -156,7 +156,11 @@ function disconnect() {
 
 function init() {
   ps = makePs();
-  dispatch = createDispatcher(ps, actions, { docSummary, onError: setError });
+  dispatch = createDispatcher(ps, actions, {
+    docSummary,
+    onError: setError,
+    modalState: (p, d) => modalState(p, d, dev.modalHint()),
+  });
   // The event recorder is a dev aid: if its listener cannot be added, the
   // panel still connects.
   const recorderFailed = (e) => setError(`event recorder unavailable: ${String((e && e.message) || e)}`);

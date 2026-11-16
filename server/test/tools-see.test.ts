@@ -80,6 +80,15 @@ describe("see/dev tools over MCP", () => {
     expect(out.doc.layers[0].text.content).toBe("MY ROOM");
   });
 
+  it("get_document's description explains bounds, maskEnabled and modal", async () => {
+    const { tools } = await client.listTools();
+    const d = tools.find((t) => t.name === "get_document")!.description!;
+    expect(d).toContain("bounds");
+    expect(d).toContain("maskEnabled");
+    expect(d).toContain("MODAL_BUSY");
+    expect(d).toContain('"crop"');
+  });
+
   it("get_document puts the requested document's summary in doc only once", async () => {
     await plugin.connect();
     const other: DocSummary = { ...DOC, id: 2, name: "b.psd" };

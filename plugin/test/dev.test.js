@@ -78,3 +78,42 @@ test("start hands back the listener's promise so a rejection can be caught", asy
   const ps = { action: { addNotificationListener: () => Promise.reject(new Error("no listener")) } };
   await assert.rejects(dev.start(ps), /no listener/);
 });
+
+// ---------- A2: modal tracking from Photoshop's modal events ----------
+
+const enterTool = (ID) => ({ level: 1, state: { _value: "enter" }, tool: { _obj: "tool", ID, title: ID }, kind: { _value: "tool" } });
+const exitTool = (ID) => ({ level: 0, state: { _value: "exit" }, tool: { _obj: "tool", ID }, reason: { _value: "commit" } });
+
+test("trackModal: tool modal enter/exit classifies crop, text and transform", () => {
+  const { trackModal, classifyModal } = freshDev();
+  let s = trackModal(undefined, "toolModalStateChanged", enterTool("Crop"));
+  assert.strictEqual(classifyModal(s), "crop");
+  s = trackModal(s, "toolModalStateChanged", exitTool("Crop"));
+  assert.strictEqual(classifyModal(s), null);
+  s = trackModal(s, "toolModalStateChanged", enterTool("Rect"));
+  assert.strictEqual(classifyModal(s), "transform");
+  s = trackModal(s, "toolModalStateChanged", enterTool("TypeTool"));
+  assert.strictEqual(classifyModal(s), "text");
+  s = trackModal(s, "make", { _obj: "make" });
+  assert.strictEqual(classifyModal(s), "text");
+});
+
+test("trackModal: a dialog (modalStateChanged) is reported while open", () => {
+  const { trackModal, classifyModal } = freshDev();
+  let s = trackModal(undefined, "modalStateChanged", { level: 1, state: { _enum: "state", _value: "enter" }, title: "Layer Style" });
+  assert.strictEqual(classifyModal(s), "dialog");
+  s = trackModal(s, "modalStateChanged", { level: 0, state: { _enum: "state", _value: "exit" }, title: "Layer Style" });
+  assert.strictEqual(classifyModal(s), null);
+});
+
+test("modalHint follows the listener and survives dev_events clear", async () => {
+  const dev = freshDev();
+  const { ps, calls } = stubPs();
+  assert.strictEqual(dev.modalHint(), null);
+  dev.start(ps);
+  calls[0].handler("toolModalStateChanged", enterTool("Crop"));
+  await dev.dev_events(ps, { clear: true });
+  assert.strictEqual(dev.modalHint(), "crop");
+  calls[0].handler("toolModalStateChanged", exitTool("Crop"));
+  assert.strictEqual(dev.modalHint(), null);
+});
