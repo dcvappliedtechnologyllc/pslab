@@ -91,19 +91,34 @@ const selectEllipse = (b) => ({
   antiAlias: true,
 });
 
+// Every layer id in the document, groups included.
+function layerIds(layers, ids = new Set()) {
+  for (const layer of Array.from(layers || [])) {
+    ids.add(layer.id);
+    layerIds(safe(() => layer.layers, null), ids);
+  }
+  return ids;
+}
+
 // The vector shape layer from the (draft) recorded make; null when there is no
-// usable descriptor or Photoshop refuses it (then the raster path runs).
+// usable descriptor or Photoshop refuses it (then the raster path runs). A
+// refused make that still left a layer behind has that layer deleted, so no
+// empty shape layer stays next to the raster one.
 async function tryVectorShape(ps, d, rec, geo, color) {
   if (!usable(rec)) return null;
-  const before = activeId(d);
+  const before = layerIds(d.layers);
+  let ok = true;
   try {
     const { left, top, right, bottom } = geo.bbox;
     await bp(ps, applyParams(rec, { left, top, right, bottom, color_r: color.r, color_g: color.g, color_b: color.b }));
   } catch {
-    return null;
+    ok = false;
   }
+  const made = [...layerIds(d.layers)].filter((id) => !before.has(id));
   const id = activeId(d);
-  return id !== null && id !== before ? id : null;
+  if (ok && id !== null && made.includes(id)) return id;
+  if (made.length > 0) await bp(ps, made.map((m) => ({ _obj: "delete", _target: [{ _ref: "layer", _id: m }] })));
+  return null;
 }
 
 // Raster fallback: a new pixel layer, a selection of the shape, filled with the

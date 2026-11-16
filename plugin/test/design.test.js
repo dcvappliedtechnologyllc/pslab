@@ -69,10 +69,20 @@ function makeStub(opts = {}) {
             out.push(answer);
             continue;
           }
+          if (x._obj === "delete" && x._target[0]._ref === "layer") {
+            doc.layers = doc.layers.filter((l) => l.id !== x._target[0]._id);
+          }
           if (x._obj === "select" && x._target[0]._ref === "layer") doc.activeLayers = [byId(x._target[0]._id)];
           if (x._obj === "make" && x._target[0]._ref === "contentLayer") {
             if (opts.vectorFails) {
               out.push({ _obj: "error", message: "The command make is not currently available" });
+              continue;
+            }
+            if (opts.vectorStray) {
+              // a layer is made, but the make still fails (or leaves the selection as it was)
+              doc.layers.unshift(mk(nextId++, "Rectangle 1", { kind: "solidColor" }));
+              if (opts.vectorStray === "error") out.push({ _obj: "error", message: "Could not complete the command" });
+              else out.push({});
               continue;
             }
             const l = mk(nextId++, "Rectangle 1", { kind: "solidColor", boundsNoEffects: edges(x.using.shape) });
@@ -197,6 +207,21 @@ test("add_shape falls back to a raster fill when the vector make fails: vector f
   const layer = ps.byId(100);
   assert.equal(layer.name, "Bar 1");
   assert.equal(layer.isClippingMask, false, "made above a clipped layer: released");
+});
+
+test("add_shape deletes a stray layer left by a failed vector make before the raster fallback", async () => {
+  for (const mode of ["error", "inactive"]) {
+    const ps = makeStub({ vectorStray: mode });
+    const r = await design.add_shape(ps, { doc: 1, kind: "rect", bbox: { left: 0, top: 0, right: 10, bottom: 10 }, color: WHITE, name: "R" });
+    assert.equal(r.vector, false, mode);
+    assert.equal(r.layer_id, 101, mode);
+    assert.equal(ps.byId(100), null, `${mode}: stray shape layer deleted`);
+    const objs = bpDescs(ps).map((x) => x._obj);
+    const del = bpDescs(ps).find((x) => x._obj === "delete");
+    assert.deepEqual(del._target, [{ _ref: "layer", _id: 100 }]);
+    assert.ok(objs.indexOf("delete") < objs.lastIndexOf("make"), `${mode}: deleted before the raster make`);
+    assert.deepEqual(ps.doc.layers.map((l) => l.id), [101, 3, 4, 1]);
+  }
 });
 
 test("add_shape raster ellipse uses an ellipse selection; raster diagonal line a polygon", async () => {
