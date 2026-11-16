@@ -37,4 +37,33 @@ export function registerLayerTools(server: McpServer, bridge: PluginBridge): voi
     },
     async (args) => call(bridge, "select_layer", args),
   );
+
+  server.registerTool(
+    "reorder_layer",
+    {
+      annotations: hints.set,
+      description:
+        "Move a layer up or down the layer stack in doc (Layer > Arrange), without moving its pixels. Give exactly one " +
+        "of: above (a layer id; it goes directly above that layer, inside that layer's group if it is in one, and is " +
+        "released from any clipping group), below (a layer id; directly below it; never below the Background), or to: " +
+        '"top" (top of the whole document, out of any group) or "bottom" (directly above the Background, or the ' +
+        "bottom of the document when there is none). The Background itself never moves (PROTECTED_LAYER), and a " +
+        "group cannot go inside itself. Already in place: nothing changes and no history state is made (moved: " +
+        "false). Returns layer_id, index (0 = top of its group or of the document) and moved. One undoable history " +
+        "step; the active document is unchanged afterwards.",
+      inputSchema: {
+        doc: docArg,
+        layer: layerId.describe("The layer to move in the stack"),
+        above: layerId.optional().describe("Put the layer directly above this layer id"),
+        below: layerId.optional().describe("Put the layer directly below this layer id"),
+        to: z.enum(["top", "bottom"]).optional().describe("top of the document, or bottom (just above the Background)"),
+      },
+    },
+    async (args) => {
+      if ([args.above, args.below, args.to].filter(given).length !== 1) {
+        return toolError("Give exactly one of above, below or to.");
+      }
+      return call(bridge, "reorder_layer", args);
+    },
+  );
 }

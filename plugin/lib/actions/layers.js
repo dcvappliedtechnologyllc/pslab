@@ -4,7 +4,8 @@
 const D = require("../descriptors");
 const { runRead, bp } = require("../step");
 const { findLayer, resolveDoc, safe } = require("../doc");
-const { codedError, requireLayer } = require("./edit");
+const { codedError, requireLayer, stepIn, isProtectedLayer } = require("./edit");
+const { requireAnchor, placeAbove, placeBelow, isDirectlyAbove, isDirectlyBelow, locate } = require("../place");
 
 const invalid = (message) => codedError("INVALID_ARGS", message);
 
@@ -52,4 +53,75 @@ async function select_layer(ps, args = {}) {
   });
 }
 
-module.exports = { select_layer };
+// ---------- reorder_layer ----------
+
+const nameOf = (layer) => String(safe(() => layer.name, ""));
+const given = (v) => v !== undefined && v !== null;
+
+function requireMovable(d, id) {
+  const layer = requireLayer(d, id);
+  if (isProtectedLayer(layer)) {
+    throw codedError("PROTECTED_LAYER", `Layer ${id} (${nameOf(layer)}) is the Background layer and does not move`);
+  }
+  return layer;
+}
+
+// {plan, label} for reorder_layer, or {plan: null} when already in place.
+// plan(ps) runs inside the step. DOM layer.move only: the batchPlay
+// `move ... to ordinal` form failed live on Photoshop 27.11.
+function reorderPlan(ps, d, layer, args) {
+  const P = ps.constants.ElementPlacement;
+  const modes = ["above", "below", "to"].filter((k) => given(args[k]));
+  if (modes.length !== 1) throw invalid("Give exactly one of above, below or to");
+  if (given(args.to)) {
+    const top = Array.from(d.layers || []);
+    if (args.to === "top") {
+      const first = top[0];
+      if (first.id === layer.id) return { plan: null };
+      return { label: "to top", plan: () => layer.move(first, P.PLACEBEFORE) };
+    }
+    if (args.to === "bottom") {
+      const bg = top.find((l) => safe(() => l.isBackgroundLayer, false) === true);
+      if (bg) {
+        if (isDirectlyAbove(d, layer, bg)) return { plan: null };
+        return { label: "to bottom", plan: () => layer.move(bg, P.PLACEBEFORE) };
+      }
+      const last = top[top.length - 1];
+      if (last.id === layer.id) return { plan: null };
+      return { label: "to bottom", plan: () => layer.move(last, P.PLACEAFTER) };
+    }
+    throw invalid(`to must be top or bottom, got ${args.to}`);
+  }
+  const where = given(args.above) ? "above" : "below";
+  const anchor = requireAnchor(d, args[where]);
+  if (anchor.id === layer.id) throw invalid(`A layer cannot go ${where} itself`);
+  const at = locate(d, anchor.id);
+  if (at && at.parents.some((p) => p.id === layer.id)) {
+    throw invalid(`Layer ${anchor.id} is inside group ${layer.id}; a group cannot go ${where} its own contents`);
+  }
+  if (where === "below" && isProtectedLayer(anchor)) {
+    throw codedError("PROTECTED_LAYER", "Nothing can go below the Background layer");
+  }
+  const inPlace = where === "above" ? isDirectlyAbove(d, layer, anchor) : isDirectlyBelow(d, layer, anchor);
+  if (inPlace) return { plan: null };
+  const place = where === "above" ? placeAbove : placeBelow;
+  return { label: `${where} ${nameOf(anchor)}`, plan: () => place(ps, d, layer, anchor.id) };
+}
+
+const indexOf = (d, id) => {
+  const at = locate(d, id);
+  return at ? at.index : null;
+};
+
+async function reorder_layer(ps, args = {}) {
+  const { d } = resolveDoc(ps, args.doc);
+  const layer = requireMovable(d, args.layer);
+  const { plan, label } = reorderPlan(ps, d, layer, args);
+  if (!plan) return { layer_id: layer.id, index: indexOf(d, layer.id), moved: false };
+  return stepIn(ps, `Claude: reorder_layer, ${nameOf(layer)} ${label}`, d, async () => {
+    await plan();
+    return { layer_id: layer.id, index: indexOf(d, layer.id), moved: true };
+  });
+}
+
+module.exports = { select_layer, reorder_layer };

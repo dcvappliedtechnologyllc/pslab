@@ -646,5 +646,5 @@ module.exports = {
   add_adjustment, add_pixel_layer, mask_from_polygon, mask_from_subject, paint_mask, set_layer, delete_layer, set_adjustment,
   applyParams, setRecorded,
   // shared with masks.js
-  codedError, requireLayer, stepIn, toBytes, writeMask, refreshAfterImaging,
+  codedError, requireLayer, stepIn, toBytes, writeMask, refreshAfterImaging, isProtectedLayer,
 };

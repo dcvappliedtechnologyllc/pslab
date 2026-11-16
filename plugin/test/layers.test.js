@@ -166,3 +166,72 @@ test("select_layer falls back to the DOM when addToSelection fails", async () =>
   const r = await layers.select_layer(ps, { layers: [4, 5], doc: 1 });
   assert.deepEqual(r, { active_layer_ids: [4, 5] });
 });
+
+// ---------- reorder_layer ----------
+
+test("reorder_layer above an anchor moves PLACEBEFORE it in one named step", async () => {
+  const ps = makeStub();
+  const r = await layers.reorder_layer(ps, { doc: 1, layer: 8, above: 3 });
+  assert.deepEqual(order(ps.doc.layers), [8, 3, 4, 5, 6, 1]);
+  assert.deepEqual(r, { layer_id: 8, index: 0, moved: true });
+  assert.equal(historyName(ps), "Claude: reorder_layer, Vignette above Title");
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "move"), [["move", 8, 3, "placeBefore"]]);
+  assert.equal(ps.app.activeDocument, ps.other, "active document restored");
+});
+
+test("reorder_layer below an anchor moves PLACEAFTER it", async () => {
+  const ps = makeStub();
+  await layers.reorder_layer(ps, { doc: 1, layer: 3, below: 5 });
+  assert.deepEqual(order(ps.doc.layers), [4, 5, 3, 6, 8, 1]);
+  assert.equal(historyName(ps), "Claude: reorder_layer, Title below Bar 2");
+});
+
+test("reorder_layer to top goes above the document's top layer, even from inside a group", async () => {
+  const ps = makeStub();
+  await layers.reorder_layer(ps, { doc: 1, layer: 7, to: "top" });
+  assert.deepEqual(order(ps.doc.layers), [7, 3, 4, 5, 6, 8, 1]);
+  assert.equal(historyName(ps), "Claude: reorder_layer, Inner to top");
+});
+
+test("reorder_layer to bottom lands directly above the Background", async () => {
+  const ps = makeStub();
+  await layers.reorder_layer(ps, { doc: 1, layer: 3, to: "bottom" });
+  assert.deepEqual(order(ps.doc.layers), [4, 5, 6, 8, 3, 1]);
+  assert.equal(historyName(ps), "Claude: reorder_layer, Title to bottom");
+});
+
+test("reorder_layer to bottom without a Background goes after the last layer", async () => {
+  const ps = makeStub();
+  ps.doc.layers.pop();
+  await layers.reorder_layer(ps, { doc: 1, layer: 3, to: "bottom" });
+  assert.deepEqual(order(ps.doc.layers), [4, 5, 6, 8, 3]);
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "move"), [["move", 3, 8, "placeAfter"]]);
+});
+
+test("reorder_layer already in place makes no step", async () => {
+  for (const args of [{ layer: 3, above: 4 }, { layer: 4, below: 3 }, { layer: 3, to: "top" }, { layer: 8, to: "bottom" }]) {
+    const ps = makeStub();
+    const r = await layers.reorder_layer(ps, { doc: 1, ...args });
+    assert.equal(r.moved, false, JSON.stringify(args));
+    assert.equal(modalCount(ps), 0, JSON.stringify(args));
+  }
+});
+
+test("reorder_layer refusals happen before any modal call", async () => {
+  const cases = [
+    [{ layer: 1, to: "top" }, "PROTECTED_LAYER"],
+    [{ layer: 3, below: 1 }, "PROTECTED_LAYER"],
+    [{ layer: 3, above: 3 }, "INVALID_ARGS"],
+    [{ layer: 6, above: 7 }, "INVALID_ARGS"], // its own child
+    [{ layer: 3 }, "INVALID_ARGS"],
+    [{ layer: 3, above: 4, to: "top" }, "INVALID_ARGS"],
+    [{ layer: 3, to: "middle" }, "INVALID_ARGS"],
+    [{ layer: 404, to: "top" }, "NO_LAYER"],
+    [{ layer: 3, above: 404 }, "NO_LAYER"],
+  ];
+  for (const [args, code] of cases) {
+    const ps = makeStub();
+    await assert.rejects(layers.reorder_layer(ps, { doc: 1, ...args }), { code }, JSON.stringify(args));
+    assert.equal(modalCount(ps), 0, JSON.stringify(args));
+  }
+});

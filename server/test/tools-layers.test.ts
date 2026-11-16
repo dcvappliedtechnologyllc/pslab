@@ -59,4 +59,31 @@ describe("layer tools over MCP", () => {
     expect(res.isError).toBe(true);
     expect(seen).toEqual([]);
   });
+
+  // ---------- reorder_layer ----------
+
+  it("reorder_layer forwards exactly one target and is a set tool", async () => {
+    for (const extra of [{ above: 4 }, { below: 4 }, { to: "top" }, { to: "bottom" }]) {
+      seen = [];
+      const res = await run("reorder_layer", { layer: 3, ...extra });
+      expect(res.isError, JSON.stringify(extra)).toBeFalsy();
+      expect(seen).toEqual([{ action: "reorder_layer", args: { layer: 3, ...extra } }]);
+    }
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "reorder_layer")!;
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true });
+    expect(t.description).toContain("PROTECTED_LAYER");
+    expect(t.description).toContain("directly above the Background");
+  });
+
+  it("reorder_layer refuses none or several targets before forwarding", async () => {
+    for (const extra of [{}, { above: 4, below: 5 }, { above: 4, to: "top" }]) {
+      const res = await run("reorder_layer", { layer: 3, ...extra });
+      expect(res.isError, JSON.stringify(extra)).toBe(true);
+      expect(textOf(res)).toBe("Give exactly one of above, below or to.");
+    }
+    const bad = await run("reorder_layer", { layer: 3, to: "middle" });
+    expect(bad.isError).toBe(true);
+    expect(seen).toEqual([]);
+  });
 });
