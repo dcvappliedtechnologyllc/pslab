@@ -326,3 +326,55 @@ test("add_layer_style refuses bad params, the Background, unknown styles and a m
   }
   assert.equal(modalCount(ps), 0);
 });
+
+// ---------- set_layer_style ----------
+
+const CURRENT_SHADOW = {
+  _obj: "dropShadow",
+  enabled: true,
+  present: true,
+  mode: { _enum: "blendMode", _value: "multiply" },
+  color: { _obj: "RGBColor", red: 0, grain: 0, blue: 0 },
+  opacity: pct(35),
+  useGlobalAngle: false,
+  localLightingAngle: { _unit: "angleUnit", _value: 120 },
+  distance: pxu(6),
+  chokeMatte: pxu(0),
+  blur: pxu(10),
+  noise: pct(7),
+};
+
+test("set_layer_style merges partial params over the current shadow, keeps the stroke", async () => {
+  const existing = { _obj: "layerEffects", scale: pct(486.1111111111111), frameFX: STROKE, dropShadow: CURRENT_SHADOW };
+  const ps = makeStub({ gets: effectsGet({ 3: existing }) });
+  const r = await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: { opacity: 60, size_px: 4 } });
+  assert.deepEqual(r.applied, { color: { r: 0, g: 0, b: 0 }, opacity: 60, angle: 120, distance_px: 6, spread_pct: 0, size_px: 4, blend: "multiply" });
+  assert.equal(r.enabled, true);
+  assert.equal(modalCount(ps), 1);
+  assert.equal(historyName(ps), "Claude: set_layer_style, drop_shadow opacity 60 size_px 4");
+  const set = styleSet(ps);
+  assert.deepEqual(set.to.frameFX, STROKE);
+  assert.deepEqual(set.to.scale, pct(486.1111111111111));
+  assert.deepEqual(set.to.dropShadow.opacity, pct(60));
+  assert.deepEqual(set.to.dropShadow.blur, pxu(4));
+  assert.deepEqual(set.to.dropShadow.distance, pxu(6), "unchanged value kept");
+  assert.deepEqual(set.to.dropShadow.noise, pct(7), "current extras kept");
+});
+
+test("set_layer_style enabled false turns the shadow off without changing values", async () => {
+  const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), dropShadow: CURRENT_SHADOW } }) });
+  const r = await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", enabled: false });
+  assert.equal(r.enabled, false);
+  assert.equal(historyName(ps), "Claude: set_layer_style, drop_shadow off");
+  const ds = styleSet(ps).to.dropShadow;
+  assert.equal(ds.enabled, false);
+  assert.deepEqual(ds.opacity, pct(35));
+});
+
+test("set_layer_style: NO_STYLE without a shadow, NOTHING_TO_CHANGE without params, no modal call", async () => {
+  const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), frameFX: STROKE } }) });
+  await assert.rejects(design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: { opacity: 5 } }), { code: "NO_STYLE" });
+  await assert.rejects(design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: {} }), { code: "NOTHING_TO_CHANGE" });
+  await assert.rejects(design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: { blur: 1 } }), { code: "INVALID_ARGS" });
+  assert.equal(modalCount(ps), 0);
+});

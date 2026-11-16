@@ -105,4 +105,26 @@ describe("design tools over MCP", () => {
     }
     expect(seen).toEqual([]);
   });
+
+  // ---------- set_layer_style ----------
+
+  it("set_layer_style forwards partial params or enabled and is a set tool", async () => {
+    let res = await run("set_layer_style", { layer: 3, style: "drop_shadow", params: { opacity: 60 } });
+    expect(res.isError).toBeFalsy();
+    res = await run("set_layer_style", { layer: 3, style: "drop_shadow", enabled: false });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([
+      { action: "set_layer_style", args: { layer: 3, style: "drop_shadow", params: { opacity: 60 } } },
+      { action: "set_layer_style", args: { layer: 3, style: "drop_shadow", params: {}, enabled: false } },
+    ]);
+    const t = await tool("set_layer_style");
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(t.description).toContain("NO_STYLE");
+  });
+
+  it("set_layer_style refuses a call with nothing to change", async () => {
+    const res = await run("set_layer_style", { layer: 3, style: "drop_shadow" });
+    expect(res.isError).toBe(true);
+    expect(seen).toEqual([]);
+  });
 });

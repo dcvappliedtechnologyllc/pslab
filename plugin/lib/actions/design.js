@@ -200,15 +200,22 @@ function shadowRecording() {
   return rec;
 }
 
+// The layer's drop shadow descriptor (the first of several), or null.
+function currentShadow(existing) {
+  if (!isObj(existing)) return null;
+  if (isObj(existing.dropShadow)) return existing.dropShadow;
+  const multi = existing.dropShadowMulti;
+  return Array.isArray(multi) && isObj(multi[0]) ? multi[0] : null;
+}
+
 // The `set layerEffects` descriptor: the recorded drop shadow (or, with
 // keepCurrent, the layer's current one over it) with full params applied,
 // merged into the layer's other effects. The scale is the existing one, else
 // 100 * ppi / 72. Use Global Light is always off (angle is per layer).
 function shadowSet(rec, existing, full, { keepCurrent = false, enabled, ppi } = {}) {
   const template = clone(rec);
-  if (keepCurrent && existing && isObj(existing.dropShadow)) {
-    template.set.to.dropShadow = { ...template.set.to.dropShadow, ...clone(existing.dropShadow) };
-  }
+  const current = keepCurrent ? currentShadow(existing) : null;
+  if (current) template.set.to.dropShadow = { ...template.set.to.dropShadow, ...clone(current) };
   const fields = { ...template.fields };
   // a colour we cannot read (not RGB) stays as it is unless one is given
   if (!full.color) for (const k of ["color_r", "color_g", "color_b"]) delete fields[k];
@@ -241,4 +248,30 @@ async function add_layer_style(ps, args = {}) {
   });
 }
 
-module.exports = { add_shape, add_layer_style, setRecorded, readEffects };
+const fmtParam = (k, v) => (k === "color" ? `color ${v.r},${v.g},${v.b}` : `${k} ${v}`);
+
+async function set_layer_style(ps, args = {}) {
+  const params = args.params === undefined ? {} : args.params;
+  E.validateShadowParams(params);
+  if (given(args.enabled) && typeof args.enabled !== "boolean") throw invalid("enabled must be true or false");
+  const changed = Object.entries(params).filter(([, v]) => v !== undefined);
+  if (changed.length === 0 && !given(args.enabled)) {
+    throw codedError("NOTHING_TO_CHANGE", "set_layer_style needs params or enabled");
+  }
+  const { d, layer } = styleTarget(ps, args);
+  const rec = shadowRecording();
+  const existing = await readEffects(ps, d, layer.id);
+  const current = currentShadow(existing);
+  if (!current) throw codedError("NO_STYLE", `Layer ${layer.id} (${nameOf(layer)}) has no ${args.style}; use add_layer_style`);
+  const full = E.shadowParams(params, E.shadowFromDescriptor(current));
+  const enabled = given(args.enabled) ? args.enabled : undefined;
+  const desc = shadowSet(rec, existing, full, { keepCurrent: true, enabled, ppi: Number(safe(() => d.resolution, 72)) });
+  const parts = changed.slice(0, 2).map(([k, v]) => fmtParam(k, v));
+  if (enabled !== undefined) parts.push(enabled ? "on" : "off");
+  return stepIn(ps, `Claude: set_layer_style, ${args.style} ${parts.join(" ")}`, d, async () => {
+    await bp(ps, [D.selectLayerById(layer.id), desc]);
+    return { ok: true, layer_id: layer.id, style: args.style, applied: full, enabled: desc.to.dropShadow.enabled !== false };
+  });
+}
+
+module.exports = { add_shape, add_layer_style, set_layer_style, setRecorded, readEffects };

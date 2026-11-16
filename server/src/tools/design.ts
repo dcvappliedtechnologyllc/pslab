@@ -98,4 +98,30 @@ export function registerDesignTools(server: McpServer, bridge: PluginBridge): vo
     },
     async (args) => call(bridge, "add_layer_style", args),
   );
+
+  server.registerTool(
+    "set_layer_style",
+    {
+      annotations: hints.set,
+      description:
+        "Change a layer style that add_layer_style (or the user) put on a layer in doc, in place. style drop_shadow: " +
+        "params holds only the settings to change (color, opacity, angle, distance_px, spread_pct, size_px, blend); " +
+        "the rest keep their current values. enabled: false hides the shadow and true shows it again, without " +
+        "changing its settings. The layer's other effects are kept. NO_STYLE when the layer has no drop shadow (use " +
+        "add_layer_style). Returns layer_id, style, applied (the full settings now in effect) and enabled. One " +
+        "undoable history step.",
+      inputSchema: {
+        doc: docArg,
+        layer: layerId.describe("The layer whose style changes"),
+        style: z.enum(["drop_shadow"]),
+        params: shadowParams.default({}).describe("Only the settings to change"),
+        enabled: z.boolean().optional().describe("false hides the effect, true shows it"),
+      },
+    },
+    async (args) => {
+      const changes = Object.values(args.params ?? {}).filter(given).length;
+      if (changes === 0 && !given(args.enabled)) return toolError("Give params to change or enabled.");
+      return call(bridge, "set_layer_style", args);
+    },
+  );
 }
