@@ -45,8 +45,9 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
         "With use_selection (default true) only the part inside src_doc's active selection is copied (run select_object first). " +
         "The layer is converted to the destination document's color profile. " +
         "transform.scale_pct scales it (100 = same size); cx, cy are the image-pixel position in the destination where the " +
-        "pasted object's center lands after scaling. dst_doc is left as the active document; pass doc: dst_doc to the " +
-        "layer tools that follow. One undoable history step in each document.",
+        "pasted object's center lands after scaling. It lands above dst_doc's active layer, or directly above the layer " +
+        "id given as above (inside that layer's group, if any; never clipped). dst_doc is left as the active document; " +
+        "pass doc: dst_doc to the layer tools that follow. One undoable history step in each document.",
       inputSchema: {
         src_doc: z.number().int().describe("Source document id"),
         src_layer: z.number().int().optional().describe("Source layer id; defaults to the source document's active layer"),
@@ -62,6 +63,7 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
           .min(1)
           .optional()
           .describe('Name for the new layer; defaults to "<source layer> from <source document>"'),
+        above: z.number().int().optional().describe("Layer id in dst_doc the copy goes directly above"),
       },
     },
     forward(bridge, "copy_to"),

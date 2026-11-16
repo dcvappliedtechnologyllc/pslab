@@ -56,6 +56,13 @@ function makeStub({
         calls.push(["deleteLayer", this.id, doc.id]);
         doc.layers = doc.layers.filter((x) => x !== this);
       },
+      move(rel, placement) {
+        const owner = [src, dst].find((x) => x.layers.includes(this));
+        calls.push(["move", this.id, rel.id, placement]);
+        owner.layers.splice(owner.layers.indexOf(this), 1);
+        const i = owner.layers.findIndex((x) => x.id === rel.id);
+        owner.layers.splice(placement === "placeBefore" ? i : i + 1, 0, this);
+      },
     };
     return layer;
   }
@@ -102,7 +109,10 @@ function makeStub({
         active = v;
       },
     },
-    constants: { Intent: { RELATIVECOLORIMETRIC: "relativeColorimetric" } },
+    constants: {
+      Intent: { RELATIVECOLORIMETRIC: "relativeColorimetric" },
+      ElementPlacement: { PLACEBEFORE: "placeBefore", PLACEAFTER: "placeAfter" },
+    },
     core: {
       async executeAsModal(fn, options) {
         calls.push(["executeAsModal", options.commandName]);
@@ -715,4 +725,52 @@ test("finishing tools restore the active document on failure", async () => {
   const ps2 = makeFinishStub({ otherActive: true });
   await composite.refine_edge(ps2, { doc: 7, layer: 30, contract_px: 1, feather_px: 1 });
   assert.equal(ps2.app.activeDocument, ps2.other);
+});
+
+// ---------- A9: above on copy_to ----------
+
+function withLayerAbove(ps) {
+  // dst: Vignette (id 21) on top of the Background (id 20); the paste lands on top
+  const vignette = { id: 21, name: "Vignette", bounds: { left: 0, top: 0, right: 800, bottom: 600 } };
+  ps.dst.layers.unshift(vignette);
+  return vignette;
+}
+
+test("copy_to with above moves the copy directly above the anchor (PLACEBEFORE) and unclips it", async () => {
+  const ps = makeStub();
+  withLayerAbove(ps);
+  const res = await composite.copy_to(ps, { src_doc: 1, dst_doc: 2, transform: transformArgs, name: "Title", above: 20 });
+  const moves = ps.calls.filter((c) => c[0] === "move");
+  assert.deepEqual(moves, [["move", res.layer_id, 20, "placeBefore"]]);
+  assert.deepEqual(ps.dst.layers.map((l) => l.id), [21, res.layer_id, 20]);
+  assert.deepEqual(res.bounds, { left: 400, top: 250, right: 600, bottom: 350 });
+});
+
+test("copy_to without above does not move the copy", async () => {
+  const ps = makeStub();
+  withLayerAbove(ps);
+  await composite.copy_to(ps, { src_doc: 1, dst_doc: 2, transform: transformArgs, name: "Title" });
+  assert.equal(ps.calls.some((c) => c[0] === "move"), false);
+});
+
+test("copy_to with a missing above layer is NO_LAYER before any suspension", async () => {
+  const ps = makeStub();
+  await assert.rejects(
+    composite.copy_to(ps, { src_doc: 1, dst_doc: 2, transform: transformArgs, above: 404 }),
+    { code: "NO_LAYER" },
+  );
+  assert.equal(modalCount(ps), 0);
+  assert.equal(suspends(ps).length, 0);
+});
+
+test("copy_to releases a copy that became clipped by the move", async () => {
+  const ps = makeStub();
+  withLayerAbove(ps);
+  const res = await composite.copy_to(ps, { src_doc: 1, dst_doc: 2, transform: transformArgs, above: 20 });
+  const pasted = ps.dst.layers.find((l) => l.id === res.layer_id);
+  pasted.isClippingMask = true;
+  // a second placement of the same layer (already in place) still releases the clip
+  const { placeAbove } = require("../lib/place");
+  await placeAbove(ps, ps.dst, pasted, 20);
+  assert.equal(pasted.isClippingMask, false);
 });

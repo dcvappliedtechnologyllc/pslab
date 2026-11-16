@@ -81,6 +81,14 @@ describe("composite tools over MCP", () => {
     expect(JSON.parse(textOf(res))).toEqual({ result: { layer_id: 42 }, doc: null });
   });
 
+  it("copy_to forwards above and describes it", async () => {
+    const transform = { scale_pct: 76, cx: 1225, cy: 600 };
+    await client.callTool({ name: "copy_to", arguments: { src_doc: 1, dst_doc: 2, transform, above: 9 } });
+    expect(seen).toEqual([{ action: "copy_to", args: { src_doc: 1, use_selection: true, dst_doc: 2, transform, above: 9 } }]);
+    const { tools } = await client.listTools();
+    expect(tools.find((t) => t.name === "copy_to")!.description).toContain("directly above");
+  });
+
   it("select_object forwards args and rejects an unknown mode", async () => {
     const bbox = { left: 1, top: 2, right: 30, bottom: 40 };
     await client.callTool({ name: "select_object", arguments: { doc: 3, bbox, mode: "subject" } });

@@ -7,6 +7,7 @@ const { runStep, runSteps, runRead, bp } = require("../step");
 const { findLayer, resolveDoc, normEdges: norm, hasUserMaskStrict } = require("../doc");
 const { clampBbox } = require("../stats");
 const defaultRecorded = require("../recorded/index");
+const { requireAnchor, placeAbove } = require("../place");
 
 // Test hook: replace the recorded-descriptor map (null restores the files).
 let recordedOverride = null;
@@ -165,6 +166,8 @@ async function copy_to(ps, args = {}) {
   if (useSelection && !(src.selection && src.selection.bounds)) {
     throw codedError("NO_SELECTION", "use_selection is true but the source document has no active selection");
   }
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(dst, args.above);
 
   const original = ps.app.activeDocument;
   const srcDocName = String(src.name ?? src.title ?? `document ${src.id}`);
@@ -224,6 +227,8 @@ async function copy_to(ps, args = {}) {
       const dy = t.cy - (b.top + b.bottom) / 2;
       await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct: t.scale_pct, dx, dy })]);
       layer.name = args.name || defaultName;
+      // above: move it directly over the anchor, released from any clipping group
+      if (hasAbove) layer = await placeAbove(ps, dst, layer, args.above);
       const result = { layer_id: layer.id, bounds: norm(layer.bounds) };
 
       // src: drop the temp copy; dst stays active so the next layer tool
