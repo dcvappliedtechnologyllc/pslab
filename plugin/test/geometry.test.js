@@ -447,16 +447,22 @@ test("clone_from with feather_px masks the moved box contracted then feathered",
   assert.equal(res.feather_px, 12);
 });
 
-test("clone_from on a single-layer document duplicates it instead of Stamp Visible", async () => {
+test("clone_from on a document with one non-Background layer stamps it beside a temporary empty layer", async () => {
+  // a duplicate would keep the layer's opacity, blend, mask and effects
   const ps = makeStub({ onlyBase: true, noBackground: true });
   const res = await geometry.clone_from(ps, { doc: 1, src_bbox, dst: { x: 300, y: 250 }, name: "Floor patch" });
+  assert.equal(ps.calls.some((c) => c[0] === "duplicate"), false);
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "deleteLayer"), [["deleteLayer", 100]]);
   assert.deepEqual(allDescs(ps), [
-    D.selectLayerById(100),
+    D.selectLayerById(1),
+    { _obj: "make", _target: [{ _ref: "layer" }], using: { _obj: "layer", name: "pslab stamp helper" } },
+    D.stampVisible(),
+    D.selectLayerById(101),
     ...keepSrc,
-    D.selectLayerById(100),
+    D.selectLayerById(101),
     D.transform({ scalePct: 100, dx: 200, dy: 200 }),
   ]);
-  assert.equal(res.layer_id, 100);
+  assert.equal(res.layer_id, 101);
 });
 
 test("clone_from releases a clipped stamp", async () => {
@@ -737,4 +743,79 @@ test("content_aware_fill sample arguments are checked before any modal", async (
     (e) => e.code === "INVALID_ARGS" && /Nothing visible/.test(e.message),
   );
   assert.equal(modalCount(ps), 0);
+});
+
+// ---------- one visible layer of any kind (text, smart object, adjustment) ----------
+
+test("content_aware_fill sample layers: a lone text layer is stamped beside a temporary empty layer", async () => {
+  const ps = withSampleLayers(makeStub());
+  const res = await geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample: "layers", sample_layers: [5] });
+  assert.deepEqual(allDescs(ps).slice(0, 4), [D.selectLayerById(5), TEMP, D.stampVisible(), D.selectLayerById(101)]);
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "deleteLayer"), [["deleteLayer", 100]]);
+  assert.equal(res.layer_id, 101);
+});
+
+test("Stamp Visible's one-layer guard counts visible layers: one layer showing among hidden ones is padded", async () => {
+  for (const run of [
+    (ps) => geometry.stamp_visible(ps, { doc: 1, name: "S" }),
+    (ps) => geometry.clone_from(ps, { doc: 1, src_bbox, dst: { x: 0, y: 0 }, name: "S" }),
+    (ps) => geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "S" }),
+  ]) {
+    const ps = makeStub();
+    ps.doc.layers.find((l) => l.id === 1).visible = false; // only Lamp (a smart object) shows
+    ps.doc.layers.find((l) => l.id === 2).kind = "smartObject";
+    await run(ps);
+    assert.deepEqual(allDescs(ps).slice(0, 4), [D.selectLayerById(2), TEMP, D.stampVisible(), D.selectLayerById(101)]);
+    assert.deepEqual(ps.calls.filter((c) => c[0] === "deleteLayer"), [["deleteLayer", 100]]);
+  }
+});
+
+test("stamp_visible with only the Background showing duplicates it and puts the copy on top", async () => {
+  const ps = makeStub();
+  ps.doc.layers.find((l) => l.id === 2).visible = false;
+  const res = await geometry.stamp_visible(ps, { doc: 1, name: "S" });
+  assert.deepEqual(ps.calls.find((c) => c[0] === "duplicate"), ["duplicate", 1]);
+  assert.ok(!allDescs(ps).some((x) => x._obj === "mergeVisible"));
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [100, 2, 1]);
+  assert.equal(res.layer_id, 100);
+});
+
+test("a lone adjustment layer, or nothing visible, is refused before any modal", async () => {
+  const runs = [
+    (ps) => geometry.content_aware_fill(ps, { doc: 1, bbox: cafBbox, name: "P", sample: "layers", sample_layers: [2] }),
+    (ps) => geometry.stamp_visible(ps, { doc: 1, name: "S" }),
+    (ps) => geometry.clone_from(ps, { doc: 1, src_bbox, dst: { x: 0, y: 0 }, name: "S" }),
+  ];
+  for (const run of runs) {
+    const ps = makeStub();
+    ps.doc.layers.find((l) => l.id === 1).visible = false;
+    ps.doc.layers.find((l) => l.id === 2).kind = "curves";
+    await assert.rejects(run(ps), (e) => e.code === "INVALID_ARGS" && /adjustment layer/.test(e.message) && /Lamp/.test(e.message));
+    assert.equal(modalCount(ps), 0);
+    const none = makeStub();
+    for (const l of none.doc.layers) l.visible = false;
+    await assert.rejects(run(none), (e) => e.code === "INVALID_ARGS" && /Nothing visible/.test(e.message));
+    assert.equal(modalCount(none), 0);
+  }
+});
+
+test("the temporary layer made inside a top group is moved to the top level before the stamp", async () => {
+  const ps = makeStub();
+  ps.doc.layers.find((l) => l.id === 1).visible = false; // only Lamp shows
+  const realMake = ps.action.batchPlay;
+  ps.action.batchPlay = async (descs) => {
+    const out = await realMake(descs);
+    const made = descs.some((x) => x._obj === "make" && x._target && x._target[0]._ref === "layer");
+    if (made) {
+      // Photoshop put it inside a group: model that as "not directly above the old top"
+      const temp = ps.doc.layers.splice(0, 1)[0];
+      ps.doc.layers.push(temp);
+    }
+    return out;
+  };
+  await geometry.stamp_visible(ps, { doc: 1, name: "S" });
+  assert.deepEqual(ps.calls.find((c) => c[0] === "move"), ["move", 100, 2, "placeBefore"]);
+  const descs = allDescs(ps);
+  assert.deepEqual(descs.slice(0, 4), [D.selectLayerById(2), TEMP, D.selectLayerById(100), D.stampVisible()]);
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "deleteLayer"), [["deleteLayer", 100]]);
 });
