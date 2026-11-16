@@ -93,3 +93,43 @@ test("visibleLeaves lists what still shows after hiding", () => {
   assert.deepEqual(ids(L.visibleLeaves(tree(), [3, 10, 20])), [1]);
   assert.deepEqual(ids(L.visibleLeaves(tree(), [3, 10, 20, 1])), []);
 });
+
+// ---------- add_shape lines (B4) ----------
+
+const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
+
+test("lineRect horizontal: a length x thickness box around the midpoint, angle 0", () => {
+  const r = L.lineRect({ x: 100, y: 50 }, { x: 360, y: 50 }, 8);
+  assert.deepEqual(r.bbox, box(100, 46, 360, 54));
+  assert.equal(r.angle, 0);
+  assert.deepEqual(r.corners, [{ x: 100, y: 46 }, { x: 360, y: 46 }, { x: 360, y: 54 }, { x: 100, y: 54 }]);
+});
+
+test("lineRect vertical: an upright box, no rotation (either direction)", () => {
+  for (const [a, b] of [[{ x: 20, y: 10 }, { x: 20, y: 110 }], [{ x: 20, y: 110 }, { x: 20, y: 10 }]]) {
+    const r = L.lineRect(a, b, 4);
+    assert.deepEqual(r.bbox, box(18, 10, 22, 110));
+    assert.equal(r.angle, 0);
+  }
+});
+
+test("lineRect diagonal: unrotated box of the full length, angle clockwise in -90..90, corners on the line", () => {
+  const r = L.lineRect({ x: 0, y: 0 }, { x: 100, y: 100 }, 2);
+  const len = Math.hypot(100, 100);
+  near(r.bbox.right - r.bbox.left, len, "length");
+  near(r.bbox.bottom - r.bbox.top, 2, "thickness");
+  near((r.bbox.left + r.bbox.right) / 2, 50, "cx");
+  near((r.bbox.top + r.bbox.bottom) / 2, 50, "cy");
+  near(r.angle, 45, "angle");
+  // the reverse direction is the same line
+  near(L.lineRect({ x: 100, y: 100 }, { x: 0, y: 0 }, 2).angle, 45, "reverse angle");
+  near(L.lineRect({ x: 0, y: 100 }, { x: 100, y: 0 }, 2).angle, -45, "rising angle");
+  // the corner midpoints of the short sides are the end points
+  const [c0, , , c3] = r.corners;
+  near((c0.x + c3.x) / 2, 0, "start x");
+  near((c0.y + c3.y) / 2, 0, "start y");
+});
+
+test("lineRect refuses a zero-length line", () => {
+  assert.throws(() => L.lineRect({ x: 5, y: 5 }, { x: 5, y: 5 }, 2), /zero length/);
+});

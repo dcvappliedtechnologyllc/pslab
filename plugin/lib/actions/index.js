@@ -9,6 +9,7 @@ const geometry = require("./geometry");
 const workflow = require("./workflow");
 const masks = require("./masks");
 const layers = require("./layers");
+const design = require("./design");
 
 module.exports = {
   get_document: see.get_document,
@@ -51,4 +52,5 @@ module.exports = {
   move_layer: layers.move_layer,
   transform_layer: layers.transform_layer,
   align_layers: layers.align_layers,
+  add_shape: design.add_shape,
 };

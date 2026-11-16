@@ -62,6 +62,48 @@ function alignDeltas(boxes, target, { horizontal, vertical } = {}, asGroup = fal
   return boxes.map(delta);
 }
 
+// ---------- add_shape lines (B4) ----------
+
+// A line from `from` to `to`, thickness t, as a rectangle: bbox is the
+// unrotated length x t box centred on the midpoint, angle the clockwise
+// rotation (degrees, -90..90; image y grows down) that lays it on the line,
+// and corners the rotated box (top-left, top-right, bottom-right, bottom-left
+// of the unrotated box) for a polygon selection. Vertical lines come back as
+// an upright t x length box with angle 0, so they need no rotation.
+function lineRect(from, to, t) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const len = Math.hypot(dx, dy);
+  if (!(len > 0)) throw new Error("A line needs two different points (zero length)");
+  const mx = (from.x + to.x) / 2;
+  const my = (from.y + to.y) / 2;
+  if (dx === 0) {
+    const bbox = { left: mx - t / 2, top: my - len / 2, right: mx + t / 2, bottom: my + len / 2 };
+    return { bbox, angle: 0, corners: boxCorners(bbox) };
+  }
+  let angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+  if (angle > 90) angle -= 180;
+  if (angle <= -90) angle += 180;
+  angle += 0;
+  const bbox = { left: mx - len / 2, top: my - t / 2, right: mx + len / 2, bottom: my + t / 2 };
+  const rad = (angle * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const corners = boxCorners(bbox).map(({ x, y }) =>
+    angle === 0
+      ? { x, y }
+      : { x: mx + (x - mx) * cos - (y - my) * sin, y: my + (x - mx) * sin + (y - my) * cos },
+  );
+  return { bbox, angle, corners };
+}
+
+const boxCorners = (b) => [
+  { x: b.left, y: b.top },
+  { x: b.right, y: b.top },
+  { x: b.right, y: b.bottom },
+  { x: b.left, y: b.bottom },
+];
+
 // ---------- content_aware_fill sample (B3) ----------
 // Trees are DOM-like: {id, visible, isClippingMask?, layers?}, top of the stack first.
 
@@ -141,5 +183,5 @@ function visibleLeaves(layers, hideIds) {
 
 module.exports = {
   unionBounds, moveDelta, transformDelta, alignDeltas, centre, whole,
-  belowIds, hidePlan, visibleLeaves, flattenTree,
+  belowIds, hidePlan, visibleLeaves, flattenTree, lineRect,
 };

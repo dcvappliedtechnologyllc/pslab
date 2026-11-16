@@ -13,6 +13,7 @@ import { registerGeometryTools } from "../src/tools/geometry.js";
 import { registerWorkflowTools } from "../src/tools/workflow.js";
 import { registerMaskTools } from "../src/tools/masks.js";
 import { registerLayerTools } from "../src/tools/layers.js";
+import { registerDesignTools } from "../src/tools/design.js";
 
 const require = createRequire(import.meta.url);
 const pluginActions = require("../../plugin/lib/actions/index.js") as Record<string, unknown>;
@@ -30,6 +31,7 @@ describe("tool names", () => {
     registerWorkflowTools(server, bridge);
     registerMaskTools(server, bridge);
     registerLayerTools(server, bridge);
+    registerDesignTools(server, bridge);
     const [a, b] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "t", version: "0" });
     await Promise.all([server.connect(a), client.connect(b)]);
@@ -85,6 +87,7 @@ describe("tool schemas", () => {
     registerWorkflowTools(server, bridge);
     registerMaskTools(server, bridge);
     registerLayerTools(server, bridge);
+    registerDesignTools(server, bridge);
     const [a, b] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "t", version: "0" });
     await Promise.all([server.connect(a), client.connect(b)]);
