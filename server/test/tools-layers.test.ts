@@ -86,4 +86,28 @@ describe("layer tools over MCP", () => {
     expect(bad.isError).toBe(true);
     expect(seen).toEqual([]);
   });
+
+  // ---------- move_layer ----------
+
+  it("move_layer forwards relative and absolute moves and is an edit tool", async () => {
+    await run("move_layer", { layers: [3, 4], dy: 100 });
+    await run("move_layer", { doc: 2, layers: [3], x: 200 });
+    expect(seen).toEqual([
+      { action: "move_layer", args: { layers: [3, 4], dy: 100 } },
+      { action: "move_layer", args: { doc: 2, layers: [3], x: 200 } },
+    ]);
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "move_layer")!;
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false });
+    expect(t.description).toContain("skipped");
+    expect(t.description).toContain("PROTECTED_LAYER");
+  });
+
+  it("move_layer refuses no offset and mixed relative/absolute before forwarding", async () => {
+    const none = await run("move_layer", { layers: [3] });
+    expect(textOf(none)).toBe("Give dx/dy (relative) or x/y (absolute).");
+    const mixed = await run("move_layer", { layers: [3], dx: 5, y: 10 });
+    expect(textOf(mixed)).toBe("Give either dx/dy (relative) or x/y (absolute), not both.");
+    expect(seen).toEqual([]);
+  });
 });

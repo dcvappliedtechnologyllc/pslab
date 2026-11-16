@@ -66,4 +66,34 @@ export function registerLayerTools(server: McpServer, bridge: PluginBridge): voi
       return call(bridge, "reorder_layer", args);
     },
   );
+
+  server.registerTool(
+    "move_layer",
+    {
+      annotations: hints.edit,
+      description:
+        "Move one or more layers' content on the canvas together, as one block (the Move tool), in doc. Relative: dx/dy " +
+        "in image pixels (positive = right/down); repeating the call moves again. Absolute: x/y put the top-left " +
+        "corner of the layers' combined bounds at that point (a missing axis does not move). Give dx/dy or x/y, not " +
+        "both. Offsets are rounded to whole pixels. A listed group moves with its contents. The Background never moves " +
+        "(PROTECTED_LAYER); layers without pixels (empty, or an adjustment layer without a mask) are left alone and " +
+        "listed in skipped. Returns moved: [{id, bounds}] (bounds after the move), dx, dy and skipped. One undoable " +
+        "history step; nothing to move makes none.",
+      inputSchema: {
+        doc: docArg,
+        layers: z.array(layerId).min(1).max(50).describe("Layer ids to move together"),
+        dx: z.number().optional().describe("Pixels to move right (negative = left)"),
+        dy: z.number().optional().describe("Pixels to move down (negative = up)"),
+        x: z.number().optional().describe("Absolute: left edge of the combined bounds goes here"),
+        y: z.number().optional().describe("Absolute: top edge of the combined bounds goes here"),
+      },
+    },
+    async (args) => {
+      const rel = given(args.dx) || given(args.dy);
+      const abs = given(args.x) || given(args.y);
+      if (!rel && !abs) return toolError("Give dx/dy (relative) or x/y (absolute).");
+      if (rel && abs) return toolError("Give either dx/dy (relative) or x/y (absolute), not both.");
+      return call(bridge, "move_layer", args);
+    },
+  );
 }

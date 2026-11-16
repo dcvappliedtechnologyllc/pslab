@@ -3,7 +3,8 @@
 // history state; each change is one named step (stepIn).
 const D = require("../descriptors");
 const { runRead, bp } = require("../step");
-const { findLayer, resolveDoc, safe } = require("../doc");
+const { findLayer, resolveDoc, safe, layerBounds } = require("../doc");
+const { unionBounds, moveDelta } = require("../layout");
 const { codedError, requireLayer, stepIn, isProtectedLayer } = require("./edit");
 const { requireAnchor, placeAbove, placeBelow, isDirectlyAbove, isDirectlyBelow, locate } = require("../place");
 
@@ -124,4 +125,60 @@ async function reorder_layer(ps, args = {}) {
   });
 }
 
-module.exports = { select_layer, reorder_layer };
+// ---------- move_layer ----------
+
+const plural = (n) => `${n} layer${n === 1 ? "" : "s"}`;
+const has = (v) => typeof v === "number" && Number.isFinite(v);
+
+// The layers a move or align acts on: listed, existing, distinct, never the
+// Background; a layer whose group is also listed moves with the group, so it
+// is dropped. Layers without pixels (empty, or an adjustment without a mask)
+// have no bounds and are reported in skipped.
+function moveTargets(d, ids) {
+  const list = requireLayerList(d, ids, 50);
+  for (const layer of list) requireMovable(d, layer.id);
+  const listed = new Set(ids);
+  const own = list.filter((layer) => {
+    const at = locate(d, layer.id);
+    return !(at && at.parents.some((p) => listed.has(p.id)));
+  });
+  const live = [];
+  const skipped = [];
+  for (const layer of own) {
+    const bounds = layerBounds(layer);
+    if (bounds) live.push({ layer, bounds });
+    else skipped.push({ id: layer.id, name: nameOf(layer) });
+  }
+  return { live, skipped };
+}
+
+// DOM translate; fallback: a pure-offset Free Transform (live-verified in clone_from).
+async function translateLayer(ps, layer, dx, dy) {
+  if (dx === 0 && dy === 0) return;
+  try {
+    await layer.translate(dx, dy);
+  } catch {
+    await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct: 100, dx, dy })]);
+  }
+}
+
+const boundsNow = (d, layer) => layerBounds(findLayer(d, layer.id) || layer);
+
+async function move_layer(ps, args = {}) {
+  const rel = has(args.dx) || has(args.dy);
+  const abs = has(args.x) || has(args.y);
+  if (!rel && !abs) throw invalid("Give dx/dy (relative) or x/y (absolute)");
+  if (rel && abs) throw invalid("Give either dx/dy (relative) or x/y (absolute), not both");
+  const { d } = resolveDoc(ps, args.doc);
+  const { live, skipped } = moveTargets(d, args.layers);
+  if (live.length === 0) return { moved: [], dx: 0, dy: 0, skipped };
+  const { dx, dy } = moveDelta(unionBounds(live.map((t) => t.bounds)), args);
+  const report = () => live.map(({ layer }) => ({ id: layer.id, bounds: boundsNow(d, layer) }));
+  if (dx === 0 && dy === 0) return { moved: report(), dx, dy, skipped };
+  return stepIn(ps, `Claude: move_layer, ${plural(live.length)} ${dx},${dy}`, d, async () => {
+    for (const { layer } of live) await translateLayer(ps, layer, dx, dy);
+    return { moved: report(), dx, dy, skipped };
+  });
+}
+
+module.exports = { select_layer, reorder_layer, move_layer };

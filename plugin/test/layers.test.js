@@ -235,3 +235,75 @@ test("reorder_layer refusals happen before any modal call", async () => {
     assert.equal(modalCount(ps), 0, JSON.stringify(args));
   }
 });
+
+// ---------- move_layer ----------
+
+const boundsOf = (ps, id) => ps.byId(id).boundsNoEffects;
+
+test("move_layer translates every listed layer by dx/dy in one step", async () => {
+  const ps = makeStub();
+  const r = await layers.move_layer(ps, { doc: 1, layers: [3, 4, 5], dy: 100 });
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "translate"), [["translate", 3, 0, 100], ["translate", 4, 0, 100], ["translate", 5, 0, 100]]);
+  assert.equal(modalCount(ps), 1);
+  assert.equal(historyName(ps), "Claude: move_layer, 3 layers 0,100");
+  assert.deepEqual(r.moved[0], { id: 3, bounds: { left: 300, top: 200, right: 700, bottom: 300 } });
+  assert.deepEqual(r.skipped, []);
+  assert.equal(r.dx, 0);
+  assert.equal(r.dy, 100);
+});
+
+test("move_layer absolute puts the union's top-left at (x, y)", async () => {
+  const ps = makeStub();
+  const r = await layers.move_layer(ps, { doc: 1, layers: [3, 4], x: 200 });
+  assert.equal(r.dx, -100);
+  assert.equal(r.dy, 0);
+  assert.equal(boundsOf(ps, 3).left, 200);
+  assert.equal(boundsOf(ps, 4).left, 270);
+  assert.equal(historyName(ps), "Claude: move_layer, 2 layers -100,0");
+});
+
+test("move_layer skips layers without bounds and moves a group once with its contents", async () => {
+  const ps = makeStub();
+  const r = await layers.move_layer(ps, { doc: 1, layers: [8, 6, 7], dx: 5 });
+  assert.deepEqual(r.skipped, [{ id: 8, name: "Vignette" }]);
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "translate"), [["translate", 6, 5, 0]]);
+  assert.equal(boundsOf(ps, 7).left, 15);
+  assert.equal(historyName(ps), "Claude: move_layer, 1 layer 5,0");
+});
+
+test("move_layer falls back to a transform offset when the DOM translate fails", async () => {
+  const ps = makeStub();
+  ps.byId(4).translate = async () => {
+    throw new Error("no translate");
+  };
+  await layers.move_layer(ps, { doc: 1, layers: [4], dx: 3, dy: 4 });
+  const descs = bpDescs(ps).map(strip);
+  assert.deepEqual(descs[0], { _obj: "select", _target: [{ _ref: "layer", _id: 4 }], makeVisible: false });
+  assert.equal(descs[1]._obj, "transform");
+  assert.deepEqual(descs[1].offset.horizontal, { _unit: "pixelsUnit", _value: 3 });
+  assert.deepEqual(descs[1].width, { _unit: "percentUnit", _value: 100 });
+});
+
+test("move_layer with nothing to move makes no step", async () => {
+  const ps = makeStub();
+  const r = await layers.move_layer(ps, { doc: 1, layers: [8], dx: 5 });
+  assert.deepEqual(r, { moved: [], dx: 0, dy: 0, skipped: [{ id: 8, name: "Vignette" }] });
+  const ps2 = makeStub();
+  await layers.move_layer(ps2, { doc: 1, layers: [3], x: 300, y: 100 });
+  assert.equal(modalCount(ps) + modalCount(ps2), 0);
+});
+
+test("move_layer refusals happen before any modal call", async () => {
+  const cases = [
+    [{ layers: [3] }, "INVALID_ARGS"],
+    [{ layers: [3], dx: 1, x: 5 }, "INVALID_ARGS"],
+    [{ layers: [3, 3], dx: 1 }, "INVALID_ARGS"],
+    [{ layers: [3, 1], dx: 1 }, "PROTECTED_LAYER"],
+    [{ layers: [404], dx: 1 }, "NO_LAYER"],
+  ];
+  for (const [args, code] of cases) {
+    const ps = makeStub();
+    await assert.rejects(layers.move_layer(ps, { doc: 1, ...args }), { code }, JSON.stringify(args));
+    assert.equal(modalCount(ps), 0);
+  }
+});

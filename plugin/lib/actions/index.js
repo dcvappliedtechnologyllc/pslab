@@ -48,4 +48,5 @@ module.exports = {
   contact_sheet: workflow.contact_sheet,
   select_layer: layers.select_layer,
   reorder_layer: layers.reorder_layer,
+  move_layer: layers.move_layer,
 };
