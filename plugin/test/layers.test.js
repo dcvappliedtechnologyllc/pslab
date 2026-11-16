@@ -208,6 +208,15 @@ test("reorder_layer to bottom without a Background goes after the last layer", a
   assert.deepEqual(ps.calls.filter((c) => c[0] === "move"), [["move", 3, 8, "placeAfter"]]);
 });
 
+test("reorder_layer to top or bottom releases a clip the move left on the layer", async () => {
+  for (const to of ["top", "bottom"]) {
+    const ps = makeStub();
+    ps.byId(5).isClippingMask = true; // e.g. it landed above a clipped layer and joined the clip
+    await layers.reorder_layer(ps, { doc: 1, layer: 5, to });
+    assert.equal(ps.byId(5).isClippingMask, false, to);
+  }
+});
+
 test("reorder_layer already in place makes no step", async () => {
   for (const args of [{ layer: 3, above: 4 }, { layer: 4, below: 3 }, { layer: 3, to: "top" }, { layer: 8, to: "bottom" }]) {
     const ps = makeStub();

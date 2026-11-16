@@ -109,4 +109,4 @@ async function placeBelow(ps, d, layer, anchorId, { clip = false } = {}) {
   return placed;
 }
 
-module.exports = { requireAnchor, selectAnchor, placeAbove, placeBelow, isDirectlyAbove, isDirectlyBelow, locate };
+module.exports = { requireAnchor, selectAnchor, placeAbove, placeBelow, isDirectlyAbove, isDirectlyBelow, locate, releaseClip };

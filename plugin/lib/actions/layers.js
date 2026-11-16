@@ -6,7 +6,7 @@ const { runRead, bp } = require("../step");
 const { findLayer, resolveDoc, safe, layerBounds, normBounds } = require("../doc");
 const { unionBounds, moveDelta, transformDelta, alignDeltas } = require("../layout");
 const { codedError, requireLayer, stepIn, isProtectedLayer } = require("./edit");
-const { requireAnchor, placeAbove, placeBelow, isDirectlyAbove, isDirectlyBelow, locate } = require("../place");
+const { requireAnchor, placeAbove, placeBelow, isDirectlyAbove, isDirectlyBelow, locate, releaseClip } = require("../place");
 
 const invalid = (message) => codedError("INVALID_ARGS", message);
 
@@ -72,6 +72,12 @@ function requireMovable(d, id) {
 // `move ... to ordinal` form failed live on Photoshop 27.11.
 function reorderPlan(ps, d, layer, args) {
   const P = ps.constants.ElementPlacement;
+  // to top/bottom: a layer landing above a clipped one joins the clip; release
+  // it, as placeAbove/placeBelow do for above/below.
+  const moveTo = (rel, placement) => async () => {
+    await layer.move(rel, placement);
+    releaseClip(findLayer(d, layer.id) || layer, false);
+  };
   const modes = ["above", "below", "to"].filter((k) => given(args[k]));
   if (modes.length !== 1) throw invalid("Give exactly one of above, below or to");
   if (given(args.to)) {
@@ -79,17 +85,17 @@ function reorderPlan(ps, d, layer, args) {
     if (args.to === "top") {
       const first = top[0];
       if (first.id === layer.id) return { plan: null };
-      return { label: "to top", plan: () => layer.move(first, P.PLACEBEFORE) };
+      return { label: "to top", plan: moveTo(first, P.PLACEBEFORE) };
     }
     if (args.to === "bottom") {
       const bg = top.find((l) => safe(() => l.isBackgroundLayer, false) === true);
       if (bg) {
         if (isDirectlyAbove(d, layer, bg)) return { plan: null };
-        return { label: "to bottom", plan: () => layer.move(bg, P.PLACEBEFORE) };
+        return { label: "to bottom", plan: moveTo(bg, P.PLACEBEFORE) };
       }
       const last = top[top.length - 1];
       if (last.id === layer.id) return { plan: null };
-      return { label: "to bottom", plan: () => layer.move(last, P.PLACEAFTER) };
+      return { label: "to bottom", plan: moveTo(last, P.PLACEAFTER) };
     }
     throw invalid(`to must be top or bottom, got ${args.to}`);
   }
