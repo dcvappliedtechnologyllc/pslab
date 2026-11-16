@@ -71,7 +71,8 @@ test("render_preview clamps region to canvas and reports scale", async () => {
   assert.equal(o.documentID, 5);
   assert.equal(o.layerID, undefined);
   assert.deepEqual(o.sourceBounds, { left: 0, top: 0, right: 3000, bottom: 50 });
-  assert.deepEqual(o.targetSize, { width: 1500 });
+  // 3000 / 1500 is an exact ratio (bug 9), so one pixel less is asked for
+  assert.deepEqual(o.targetSize, { width: 1499 });
   assert.equal(o.applyAlpha, true);
   assert.equal(o.componentSize, 8);
   assert.equal(ps.disposed.length, 1);
@@ -90,9 +91,9 @@ test("render_preview defaults to whole canvas, downscales the long edge, scale u
   const ps = makeStub({ docs: [{ id: 5, width: 2000, height: 3000 }] });
   const r = await render_preview(ps, {});
   assert.deepEqual(r.region, { left: 0, top: 0, right: 2000, bottom: 3000 });
-  assert.deepEqual(getPixelsOpts(ps).targetSize, { height: 1500 });
-  assert.deepEqual(r.preview, { w: 1000, h: 1500 });
-  assert.equal(r.scale, 2);
+  assert.deepEqual(getPixelsOpts(ps).targetSize, { height: 1499 });
+  assert.deepEqual(r.preview, { w: 999, h: 1499 });
+  assert.equal(r.scale, 2000 / 999);
 
   const ps2 = makeStub({ out: [1500, 1000], docs: [{ id: 5, width: 3001, height: 2000 }] });
   const r2 = await render_preview(ps2, {});
@@ -134,12 +135,12 @@ test("region_stats reads composite at min(512, width) and returns stats with cla
   const r = await region_stats(ps, { bbox: { left: -5, top: 0, right: 1024, bottom: 2100 } });
   const o = getPixelsOpts(ps);
   assert.deepEqual(o.sourceBounds, { left: 0, top: 0, right: 1024, bottom: 2000 });
-  assert.deepEqual(o.targetSize, { width: 512 });
+  assert.deepEqual(o.targetSize, { width: 511 }); // 1024 / 512 would be exact (bug 9)
   assert.equal(o.componentSize, 8);
   assert.equal(o.applyAlpha, true);
   assert.equal("layerID" in o, false);
   assert.deepEqual(r.bbox, { left: 0, top: 0, right: 1024, bottom: 2000 });
-  assert.equal(r.px_sampled, 512 * 1000);
+  assert.equal(r.px_sampled, 511 * 998);
   assert.equal(r.clipped_high_pct, 100);
   assert.equal(r.mean.l, 255);
   assert.equal(r.layer, undefined);
@@ -187,4 +188,49 @@ test("open_document opens the file in a modal scope and returns the new document
   assert.deepEqual(ps.calls.find((c) => c[0] === "getEntryWithUrl"), ["getEntryWithUrl", "file:/tmp/x/new.jpg"]);
   await assert.rejects(open_document(ps, { path: "relative.jpg" }), (e) => e.code === "INVALID_ARGS");
   assert.equal(ps.calls.filter((c) => c[0] === "open").length, 1);
+});
+
+// ---------- A6: bug 9 ----------
+
+test("render_preview never sends an exact integer ratio (2050 into 1025 asks for 1024)", async () => {
+  const ps = makeStub({ docs: [{ id: 5, width: 2450, height: 4356 }] });
+  const r = await render_preview(ps, { region: { left: 200, top: 450, right: 2250, bottom: 1150 }, max_px: 1025 });
+  const o = getPixelsOpts(ps);
+  assert.deepEqual(o.sourceBounds, { left: 200, top: 450, right: 2250, bottom: 1150 });
+  assert.deepEqual(o.targetSize, { width: 1024 });
+  assert.deepEqual(r.region, { left: 200, top: 450, right: 2250, bottom: 1150 });
+  assert.equal(r.scale, 2050 / 1024);
+  assert.equal(r.warning, undefined);
+});
+
+function stubReturning(sourceBounds, level) {
+  const ps = makeStub({ docs: [{ id: 5, width: 2450, height: 4356 }] });
+  const get = ps.imaging.getPixels;
+  ps.imaging.getPixels = async (opts) => ({ ...(await get(opts)), sourceBounds, level });
+  return ps;
+}
+
+test("render_preview maps with the returned sourceBounds when they differ, and warns", async () => {
+  const ps = stubReturning({ left: 94, top: 277, right: 2144, bottom: 977 }, 0);
+  const r = await render_preview(ps, { region: { left: 200, top: 450, right: 2250, bottom: 1150 }, max_px: 1025 });
+  assert.deepEqual(r.region, { left: 94, top: 277, right: 2144, bottom: 977 });
+  assert.equal(r.scale, 2050 / 1024);
+  assert.match(r.warning, /returned pixels for \{left 94, top 277, right 2144, bottom 977\}/);
+});
+
+test("render_preview: returned bounds that echo the request (or its pyramid level) are not a mismatch", async () => {
+  const echo = stubReturning({ left: 200, top: 450, right: 2250, bottom: 1150 }, 0);
+  const r = await render_preview(echo, { region: { left: 200, top: 450, right: 2250, bottom: 1150 }, max_px: 1025 });
+  assert.equal(r.warning, undefined);
+  const lv = stubReturning({ left: 100, top: 225, right: 1125, bottom: 575 }, 1);
+  const r2 = await render_preview(lv, { region: { left: 200, top: 450, right: 2250, bottom: 1150 }, max_px: 1025 });
+  assert.deepEqual(r2.region, { left: 200, top: 450, right: 2250, bottom: 1150 });
+  assert.equal(r2.warning, undefined);
+});
+
+test("region_stats reports the returned bbox and a warning on a mismatch", async () => {
+  const ps = stubReturning({ left: 500, top: 500, right: 1524, bottom: 1000 }, 0);
+  const r = await region_stats(ps, { bbox: { left: 1000, top: 1000, right: 2024, bottom: 1500 } });
+  assert.deepEqual(r.bbox, { left: 500, top: 500, right: 1524, bottom: 1000 });
+  assert.match(r.warning, /instead of the requested/);
 });

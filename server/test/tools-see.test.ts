@@ -193,6 +193,25 @@ describe("see/dev tools over MCP", () => {
     });
   });
 
+  it("render_preview passes a region mismatch warning through in the text block", async () => {
+    await plugin.connect();
+    plugin.onRequest(async () => ({
+      ok: true,
+      result: {
+        jpeg_base64: "SlBFRw==",
+        preview: { w: 1024, h: 350 },
+        region: { left: 94, top: 277, right: 2144, bottom: 977 },
+        scale: 2050 / 1024,
+        warning: "Photoshop returned pixels for {left 94, ...}",
+      },
+      doc: DOC,
+    }));
+    const res = await client.callTool({ name: "render_preview", arguments: { max_px: 1025 } });
+    const text = JSON.parse((res.content as Array<Record<string, unknown>>)[1].text as string);
+    expect(text.warning).toMatch(/returned pixels/);
+    expect(text.region).toEqual({ left: 94, top: 277, right: 2144, bottom: 977 });
+  });
+
   it("render_preview rejects max_px out of range", async () => {
     await plugin.connect();
     const res = await client.callTool({ name: "render_preview", arguments: { max_px: 100 } });

@@ -821,3 +821,13 @@ test("white_balance rejects bad args before any modal, and a black patch before 
   await assert.rejects(edit.white_balance(ps, { bbox }), (e) => e.code === "DARK_REGION");
   assert.equal(ps.calls.filter((c) => c[0] === "suspendHistory").length, 0);
 });
+
+test("white_balance (patchMean) never asks for an exact integer ratio: 512 wide reads at 255", async () => {
+  const ps = withPixels(makeStub(), { r: 100, g: 110, b: 125 });
+  ps.other.width = 1000;
+  ps.other.height = 800;
+  ps.other.layers = [{ id: 20, name: "Background", kind: "pixel", isBackgroundLayer: true }];
+  await edit.white_balance(ps, { doc: 2, bbox: { left: 0, top: 0, right: 512, bottom: 300 } });
+  const first = ps.calls.find((c) => c[0] === "getPixels")[1];
+  assert.deepEqual(first.targetSize, { width: 255 });
+});

@@ -3,6 +3,7 @@
 const D = require("../descriptors");
 const { runStep, runRead, bp } = require("../step");
 const { regionStats, clampBbox } = require("../stats");
+const { safeTargetWidth } = require("../preview");
 const { readPixels } = require("./see");
 const { bitsOf, findLayer, kindOverrides, resolveDoc, hasUserMaskStrict } = require("../doc");
 const { rasterizeStrokes, polygonMask, imageDataFromMask } = require("../raster");
@@ -495,8 +496,9 @@ function whiteBalanceLevels(mean, strength = 1, keepWarmth = 0) {
 
 // layer: measure that layer's own pixels; omitted, the composite.
 async function patchMean(ps, d, bbox, label, layer) {
-  const bw = bbox.right - bbox.left;
-  const targetSize = bw > 256 ? { width: 256 } : null;
+  // never an exact integer downscale ratio (bug 9)
+  const tw = safeTargetWidth(bbox.right - bbox.left, 256);
+  const targetSize = tw === null ? null : { width: tw };
   return runRead(ps, label, async () => {
     const imageData = await readPixels(ps, d, bbox, targetSize, layer);
     try {
