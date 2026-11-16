@@ -234,6 +234,8 @@ async function add_adjustment(ps, args = {}) {
   const anchor = args.above ?? args.clip_to;
   return runStep(ps, adjustmentHistoryName(type, params), d.id, async () => {
     await activate(ps, d);
+    // an active selection would become the new layer's mask (bug 1)
+    await bp(ps, [deselect()]);
     if (anchor !== undefined && anchor !== null) await bp(ps, [D.selectLayerById(anchor)]);
     let id;
     if (group) {
@@ -305,6 +307,30 @@ async function readMask(ps, d, layerID, w, h) {
   }
 }
 
+// Bug 1: an imaging-API write (putLayerMask, putPixels) does not invalidate
+// Photoshop's display cache, so the canvas keeps showing the layer as it was,
+// and putLayerMask leaves the mask channel targeted. Inside the caller's step:
+// toggle the layer's visibility through the DOM (forces a redraw, no extra
+// history state), then target the RGB channel so later clicks hit pixels.
+// Cosmetic only: a failure here never fails the write.
+async function refreshAfterImaging(ps, d, layerID) {
+  const layer = findLayer(d, layerID);
+  if (layer) {
+    try {
+      const v = layer.visible !== false;
+      layer.visible = !v;
+      layer.visible = v;
+    } catch {
+      // the data is written; only the screen may be stale
+    }
+  }
+  try {
+    await bp(ps, [D.selectRgbChannel()]);
+  } catch {
+    // as above
+  }
+}
+
 async function writeMask(ps, d, layerID, buf, w, h) {
   const imageData = await imageDataFromMask(ps, buf, w, h);
   try {
@@ -312,6 +338,7 @@ async function writeMask(ps, d, layerID, buf, w, h) {
   } finally {
     imageData.dispose();
   }
+  await refreshAfterImaging(ps, d, layerID);
 }
 
 async function mask_from_polygon(ps, args = {}) {
@@ -619,5 +646,5 @@ module.exports = {
   add_adjustment, add_pixel_layer, mask_from_polygon, mask_from_subject, paint_mask, set_layer, delete_layer, set_adjustment,
   applyParams, setRecorded,
   // shared with masks.js
-  codedError, requireLayer, stepIn, toBytes, writeMask,
+  codedError, requireLayer, stepIn, toBytes, writeMask, refreshAfterImaging,
 };

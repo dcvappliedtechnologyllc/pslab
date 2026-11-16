@@ -113,7 +113,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
     {
       annotations: hints.add,
       description:
-        "Add an adjustment layer (one undoable history step) and return its layer_id. " +
+        "Add an adjustment layer (one undoable history step) and return its layer_id. Any active selection is cleared first, so the new layer gets an unmasked (all-white) mask. " +
         "Types and their params (all optional, default 0): " +
         "light: exposure (-5..5), contrast, highlights, shadows, whites, blacks (-100..100); " +
         "curves: points per channel {rgb|red|green|blue: [[x,y],...]} with x,y in 0..255; " +
