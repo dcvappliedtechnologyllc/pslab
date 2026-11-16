@@ -46,6 +46,12 @@ function makeStub({
         calls.push(["rename", this.id, v]);
         this._name = v;
       },
+      move(rel, placement) {
+        calls.push(["move", this.id, rel.id, placement]);
+        doc.layers.splice(doc.layers.indexOf(this), 1);
+        const i = doc.layers.indexOf(doc.layers.find((x) => x.id === rel.id));
+        doc.layers.splice(placement === "placeBefore" ? i : i + 1, 0, this);
+      },
       async duplicate() {
         calls.push(["duplicate", this.id]);
         const l = makeLayer(doc, nextId++, `${this._name} copy`, this.bounds);
@@ -71,6 +77,7 @@ function makeStub({
     calls,
     doc,
     other,
+    constants: { ElementPlacement: { PLACEBEFORE: "placeBefore", PLACEAFTER: "placeAfter" } },
     app: {
       documents: [doc, other],
       get activeDocument() {
@@ -477,4 +484,79 @@ test("clone_from: a failing transform rolls back and surfaces the code", async (
   );
   assert.deepEqual(resumes(ps), [false]);
   assert.equal(ps.app.activeDocument, ps.other);
+});
+
+// ---------- A7: bug 10 (full canvas) and stamp_visible ----------
+
+const fullBox = { left: 0, top: 0, right: 600, bottom: 400 };
+
+test("clone_from on the full canvas sends no selection, inverse or delete, and no zero move", async () => {
+  const ps = makeStub();
+  const res = await geometry.clone_from(ps, { doc: 1, src_bbox: fullBox, dst: { x: 0, y: 0 }, name: "Full" });
+  assert.deepEqual(allDescs(ps), [D.selectLayerById(2), D.stampVisible()]);
+  assert.deepEqual(res.bounds, fullBox);
+  assert.deepEqual(suspends(ps), [{ documentID: 1, name: "Claude: clone_from, Full" }]);
+  assert.deepEqual(resumes(ps), [true]);
+});
+
+test("clone_from on the full canvas still moves when dst is not the origin", async () => {
+  const ps = makeStub();
+  await geometry.clone_from(ps, { doc: 1, src_bbox: fullBox, dst: { x: 10, y: 0 }, name: "Full" });
+  const objs = allDescs(ps).map((d) => d._obj);
+  assert.ok(!objs.includes("inverse") && !objs.includes("delete"));
+  assert.deepEqual(allDescs(ps).slice(-1), [D.transform({ scalePct: 100, dx: 10, dy: 0 })]);
+});
+
+test("clone_from with an inset box still keeps only src_bbox", async () => {
+  const ps = makeStub();
+  const inset = { left: 2, top: 2, right: 598, bottom: 398 };
+  await geometry.clone_from(ps, { doc: 1, src_bbox: inset, dst: { x: 2, y: 2 }, name: "Inset" });
+  assert.deepEqual(allDescs(ps), [D.selectLayerById(2), D.stampVisible(), D.selectRectangle(inset), D.inverseSelection(), D.clearSelected(), D.deselect()]);
+});
+
+test("content_aware_fill refuses a region that (with its 2 px apron) covers the canvas, before any modal", async () => {
+  for (const args of [
+    { doc: 1, bbox: fullBox, name: "x" },
+    { doc: 1, bbox: { left: 1, top: 2, right: 598, bottom: 399 }, name: "x" },
+    { doc: 1, polygon: [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 400 }, { x: 0, y: 400 }], name: "x" },
+  ]) {
+    const ps = makeStub();
+    await assert.rejects(geometry.content_aware_fill(ps, args), (e) => e.code === "INVALID_ARGS" && /whole canvas/.test(e.message));
+    assert.equal(modalCount(ps), 0);
+  }
+  // a big triangle does not cover the canvas: it runs
+  const ps = makeStub();
+  await geometry.content_aware_fill(ps, { doc: 1, polygon: [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 0, y: 400 }], name: "Tri" });
+  assert.ok(allDescs(ps).some((d) => d._obj === "inverse"));
+});
+
+test("stamp_visible: one named step, stamp on top, renamed; returns layer_id and bounds", async () => {
+  const ps = makeStub();
+  const res = await geometry.stamp_visible(ps, { doc: 1, name: "Stamp" });
+  assert.deepEqual(suspends(ps), [{ documentID: 1, name: "Claude: stamp_visible, Stamp" }]);
+  assert.deepEqual(allDescs(ps), [D.selectLayerById(2), D.stampVisible()]);
+  assert.deepEqual(res, { layer_id: 100, bounds: fullBox });
+  assert.equal(ps.doc.layers[0].name, "Stamp");
+  assert.equal(ps.calls.some((c) => c[0] === "move"), false);
+  assert.equal(ps.app.activeDocument, ps.other);
+});
+
+test("stamp_visible with above moves the stamp directly above the anchor", async () => {
+  const ps = makeStub();
+  const res = await geometry.stamp_visible(ps, { doc: 1, name: "Stamp", above: 1 });
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "move"), [["move", 100, 1, "placeBefore"]]);
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [2, 100, 1]);
+  assert.equal(res.layer_id, 100);
+});
+
+test("stamp_visible rejects a missing name or anchor before any modal", async () => {
+  for (const [args, code] of [
+    [{ doc: 1 }, "INVALID_ARGS"],
+    [{ doc: 1, name: "" }, "INVALID_ARGS"],
+    [{ doc: 1, name: "S", above: 404 }, "NO_LAYER"],
+  ]) {
+    const ps = makeStub();
+    await assert.rejects(geometry.stamp_visible(ps, args), (e) => e.code === code, JSON.stringify(args));
+    assert.equal(modalCount(ps), 0);
+  }
 });

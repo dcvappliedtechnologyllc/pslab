@@ -4,8 +4,9 @@
 // rejected call never creates a history state.
 const D = require("../descriptors");
 const { runStep, runRead, bp } = require("../step");
-const { findLayer, resolveDoc, normEdges: norm } = require("../doc");
-const { estimateTilt, toGray, round1 } = require("../geometry");
+const { findLayer, resolveDoc, normEdges: norm, layerBounds } = require("../doc");
+const { estimateTilt, toGray, round1, coversCanvas, polygonCoversCanvas } = require("../geometry");
+const { requireAnchor, placeAbove } = require("../place");
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -223,6 +224,15 @@ async function content_aware_fill(ps, args = {}) {
       pts.every((p) => p && isNum(p.x) && isNum(p.y) && p.x >= 0 && p.y >= 0 && p.x <= w && p.y <= h);
     if (!ok) throw invalidArgs(`polygon needs at least 3 points {x, y} inside the ${w}x${h} canvas`);
   }
+  // Bug 10: a region that (with its apron) covers the canvas leaves nothing to
+  // sample and an empty inverse; Photoshop answers with a blocking alert, so
+  // refuse here, before any batchPlay.
+  if (hasBbox ? coversCanvas(args.bbox, w, h, APRON_PX) : polygonCoversCanvas(args.polygon, w, h, APRON_PX)) {
+    throw invalidArgs(
+      "The fill region (plus its 2 px apron) covers the whole canvas, so there is nothing left to sample from; " +
+        "draw it around the object only",
+    );
+  }
 
   return stepIn(ps, `Claude: content_aware_fill, ${args.name}`, d, async () => {
     const layer = await stampOnTop(ps, d, args.name);
@@ -265,13 +275,16 @@ async function clone_from(ps, args = {}) {
   }
   const dx = dst.x - src.left;
   const dy = dst.y - src.top;
+  const fullCanvas = coversCanvas(src, w, h);
 
   return stepIn(ps, `Claude: clone_from, ${args.name}`, d, async () => {
     const layer = await stampOnTop(ps, d, args.name);
     // Keep only src_bbox of the stamped composite, then move it so its
-    // top-left corner lands on dst.
-    await bp(ps, [D.selectRectangle(src), D.inverseSelection(), D.clearSelected(), D.deselect()]);
-    await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct: 100, dx, dy })]);
+    // top-left corner lands on dst. Bug 10: on the full canvas there is
+    // nothing to erase, and Delete on the empty inverse raises a blocking
+    // alert, so it is skipped (decided before any batchPlay).
+    if (!fullCanvas) await bp(ps, [D.selectRectangle(src), D.inverseSelection(), D.clearSelected(), D.deselect()]);
+    if (dx !== 0 || dy !== 0) await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct: 100, dx, dy })]);
     if (f > 0) {
       // A soft-edged mask: the moved box shrunk by f then feathered by f, so
       // the edge fades out inside the copy instead of past its hard border.
@@ -289,4 +302,19 @@ async function clone_from(ps, args = {}) {
   });
 }
 
-module.exports = { straighten, content_aware_fill, clone_from };
+// ---------- stamp_visible ----------
+
+async function stamp_visible(ps, args = {}) {
+  requireName(args.name);
+  const { d } = resolveDoc(ps, args.doc);
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(d, args.above);
+  return stepIn(ps, `Claude: stamp_visible, ${args.name}`, d, async () => {
+    let layer = await stampOnTop(ps, d, args.name);
+    if (hasAbove) layer = await placeAbove(ps, d, layer, args.above);
+    const after = findLayer(d, layer.id) || layer;
+    return { layer_id: after.id, bounds: layerBounds(after) };
+  });
+}
+
+module.exports = { straighten, content_aware_fill, clone_from, stamp_visible };

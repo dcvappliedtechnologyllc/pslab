@@ -129,9 +129,9 @@ describe("geometry tools over MCP", () => {
 
   // ---------- clone_from ----------
 
-  it("lists all three geometry tools; clone_from describes the move and feather", async () => {
+  it("lists the geometry tools; clone_from describes the move and feather", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["clone_from", "content_aware_fill", "straighten"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["clone_from", "content_aware_fill", "stamp_visible", "straighten"]);
     const t = tools.find((x) => x.name === "clone_from")!;
     expect(t.description).toContain("top-left corner");
     expect(t.description).toContain("feather_px");
@@ -157,5 +157,34 @@ describe("geometry tools over MCP", () => {
       expect(res.isError).toBe(true);
     }
     expect(seen).toEqual([]);
+  });
+
+  // ---------- stamp_visible ----------
+
+  it("stamp_visible forwards name and above, with add hints and a description", async () => {
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "stamp_visible")!;
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+    expect(t.description).toContain("merged copy");
+    expect(t.description).toMatch(/hidden layers/i);
+    expect(t.description).toContain("above");
+    const args = { doc: 2, name: "Stamp", above: 1 };
+    const res = await client.callTool({ name: "stamp_visible", arguments: args });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "stamp_visible", args }]);
+  });
+
+  it("stamp_visible refuses a missing or empty name", async () => {
+    for (const args of [{}, { name: "" }, { name: "S", above: 1.5 }]) {
+      const res = await client.callTool({ name: "stamp_visible", arguments: args });
+      expect(res.isError).toBe(true);
+    }
+    expect(seen).toEqual([]);
+  });
+
+  it("clone_from and content_aware_fill describe the full-canvas behaviour", async () => {
+    const { tools } = await client.listTools();
+    expect(tools.find((x) => x.name === "clone_from")!.description).toContain("stamp_visible");
+    expect(tools.find((x) => x.name === "content_aware_fill")!.description).toContain("whole canvas");
   });
 });

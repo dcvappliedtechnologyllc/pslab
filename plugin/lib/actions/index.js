@@ -39,6 +39,7 @@ module.exports = {
   straighten: geometry.straighten,
   content_aware_fill: geometry.content_aware_fill,
   clone_from: geometry.clone_from,
+  stamp_visible: geometry.stamp_visible,
   save_psd: output.save_psd,
   copy_layers_to: workflow.copy_layers_to,
   open_folder: workflow.open_folder,

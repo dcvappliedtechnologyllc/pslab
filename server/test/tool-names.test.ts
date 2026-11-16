@@ -46,6 +46,9 @@ describe("tool names", () => {
       }
       const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name).sort();
       expect(destructive).toEqual(["crop", "delete_layer", "export", "save", "save_psd"]);
+      // new in v0.3: stamp_visible adds a layer (not idempotent, not destructive)
+      const stamp = tools.find((t) => t.name === "stamp_visible")!;
+      expect(stamp.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false });
     } finally {
       await client.close();
     }
