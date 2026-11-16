@@ -281,18 +281,24 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
     {
       annotations: hints.destroy,
       description:
-        "Delete one layer (adjustment, pixel, group with its contents, smart object) from doc (default the active document). " +
-        "Requires confirm: true, or the tool refuses and does nothing. The Background layer is never deleted (PROTECTED_LAYER). " +
-        "The active document is unchanged afterwards. One undoable history step; returns the deleted layer's id and name, " +
-        "and the updated layer tree in doc.",
+        "Delete layers (adjustment, pixel, text, group with its contents, smart object) from doc (default the active " +
+        "document). Give exactly one of layer (one id) or layers (1..100 ids, deleted together as ONE undoable history " +
+        "step; use this instead of several delete_layer calls). Requires confirm: true, or the tool refuses and does " +
+        "nothing. The Background layer is never deleted (PROTECTED_LAYER); if any listed id is missing or protected, " +
+        "nothing is deleted. The active document is unchanged afterwards. Returns deleted: {id, name} for layer, or " +
+        "deleted: [{id, name}] for layers, and the updated layer tree in doc.",
       inputSchema: {
         doc: docArg,
-        layer: layerId,
+        layer: layerId.optional(),
+        layers: z.array(layerId).min(1).max(100).optional().describe("Several layer ids, deleted in one step"),
         confirm: z.boolean().optional().describe("Must be true, or the tool refuses and does nothing"),
       },
     },
     async (args) => {
       if (args.confirm !== true) return toolError("Set confirm: true to delete_layer.");
+      if ((args.layer === undefined) === (args.layers === undefined)) {
+        return toolError("Give exactly one of layer or layers.");
+      }
       return forward(bridge, "delete_layer")(args);
     },
   );

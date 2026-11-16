@@ -8,7 +8,7 @@ const { readPixels } = require("./see");
 const { bitsOf, findLayer, kindOverrides, resolveDoc, hasUserMaskStrict } = require("../doc");
 const { rasterizeStrokes, polygonMask, imageDataFromMask } = require("../raster");
 const defaultRecorded = require("../recorded/index");
-const { requireAnchor, selectAnchor } = require("../place");
+const { requireAnchor, selectAnchor, locate } = require("../place");
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -465,19 +465,52 @@ function isProtectedLayer(layer) {
   return String(safeRead(() => layer.kind, "")) === "pixel" && String(safeRead(() => layer.name, "")) === "Background";
 }
 
-// Needs confirm: true here as well as on the server (defence in depth).
-async function delete_layer(ps, args = {}) {
-  if (args.confirm !== true) throw codedError("CONFIRM_REQUIRED", "Set confirm: true to delete_layer.");
-  const { d } = resolveDoc(ps, args.doc);
-  const layer = requireLayer(d, args.layer);
+function requireDeletable(d, id) {
+  const layer = requireLayer(d, id);
   const name = String(safeRead(() => layer.name, ""));
   if (isProtectedLayer(layer)) {
-    throw codedError("PROTECTED_LAYER", `Layer ${args.layer} (${name}) is the Background layer and is never deleted`);
+    throw codedError("PROTECTED_LAYER", `Layer ${id} (${name}) is the Background layer and is never deleted`);
   }
-  const id = layer.id;
-  return stepIn(ps, `Claude: delete_layer, ${name}`, d, async () => {
-    await layer.delete();
-    return { ok: true, deleted: { id, name } };
+  return { layer, id: layer.id, name };
+}
+
+const MAX_DELETE = 100;
+
+// Needs confirm: true here as well as on the server (defence in depth).
+// Exactly one of layer (one id) or layers (1..100 ids, one history step).
+async function delete_layer(ps, args = {}) {
+  if (args.confirm !== true) throw codedError("CONFIRM_REQUIRED", "Set confirm: true to delete_layer.");
+  const hasOne = args.layer !== undefined && args.layer !== null;
+  const hasMany = args.layers !== undefined && args.layers !== null;
+  if (hasOne === hasMany) throw codedError("INVALID_ARGS", "Give exactly one of layer or layers");
+  const { d } = resolveDoc(ps, args.doc);
+
+  if (hasOne) {
+    const { layer, id, name } = requireDeletable(d, args.layer);
+    return stepIn(ps, `Claude: delete_layer, ${name}`, d, async () => {
+      await layer.delete();
+      return { ok: true, deleted: { id, name } };
+    });
+  }
+
+  const ids = args.layers;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_DELETE) {
+    throw codedError("INVALID_ARGS", `layers must list 1 to ${MAX_DELETE} layer ids`);
+  }
+  if (new Set(ids).size !== ids.length) throw codedError("INVALID_ARGS", "layers lists the same id twice");
+  for (const id of ids) requireLayer(d, id); // NO_LAYER for any missing id first
+  const targets = ids.map((id) => requireDeletable(d, id));
+  // A listed group deletes its contents with it; deleting a child first would
+  // be redundant, and a later group delete would then fail on a stale tree.
+  const listed = new Set(ids);
+  const own = targets.filter((t) => {
+    const at = locate(d, t.id);
+    return !(at && at.parents.some((p) => listed.has(p.id)));
+  });
+  const historyName = targets.length === 1 ? `Claude: delete_layer, ${targets[0].name}` : `Claude: delete_layer, ${targets.length} layers`;
+  return stepIn(ps, historyName, d, async () => {
+    for (const t of own) await t.layer.delete();
+    return { ok: true, deleted: targets.map(({ id, name }) => ({ id, name })) };
   });
 }
 

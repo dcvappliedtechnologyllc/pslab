@@ -186,6 +186,25 @@ describe("edit tools over MCP", () => {
     expect(JSON.parse(textOf(res)).result).toEqual({ ok: true, deleted: { id: 7, name: "Glare fix" } });
   });
 
+  it("delete_layer forwards layers; neither or both of layer/layers is refused; confirm still required", async () => {
+    plugin.onRequest(async (action, args) => {
+      seen.push({ action, args });
+      return { ok: true, result: { ok: true, deleted: [] }, doc: null };
+    });
+    for (const args of [{ confirm: true }, { layer: 1, layers: [2], confirm: true }, { layers: [], confirm: true }, { layers: [1, 2] }]) {
+      const res = await client.callTool({ name: "delete_layer", arguments: args });
+      expect(res.isError, JSON.stringify(args)).toBe(true);
+    }
+    expect(seen).toEqual([]);
+    const res = await client.callTool({ name: "delete_layer", arguments: { layers: [4, 5, 6], confirm: true } });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([{ action: "delete_layer", args: { layers: [4, 5, 6], confirm: true } }]);
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "delete_layer")!;
+    expect(t.description).toContain("ONE undoable history step");
+    expect(t.annotations?.destructiveHint).toBe(true);
+  });
+
   it("delete_layer passes PROTECTED_LAYER through as an error", async () => {
     plugin.onRequest(async () => ({ ok: false, error: { code: "PROTECTED_LAYER", message: "Background" } }));
     const res = await client.callTool({ name: "delete_layer", arguments: { layer: 1, confirm: true } });

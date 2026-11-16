@@ -542,6 +542,70 @@ test("delete_layer rolls back when the delete fails", async () => {
   assert.deepEqual(ps.calls.find((c) => c[0] === "resumeHistory"), ["resumeHistory", 7, false]);
 });
 
+// ---------- A11: delete_layer with layers ----------
+
+function batchDoc(ps) {
+  const a = withDelete(ps, { id: 21, name: "Title", kind: "text" });
+  const b = withDelete(ps, { id: 22, name: "Bar L", kind: "pixel" });
+  const c = withDelete(ps, { id: 23, name: "Bar R", kind: "pixel" });
+  ps.doc.layers.unshift(a, b, c);
+  return [a, b, c];
+}
+
+test("delete_layer with layers deletes all of them in one named step", async () => {
+  const ps = makeStub();
+  batchDoc(ps);
+  const r = await edit.delete_layer(ps, { confirm: true, layers: [21, 22, 23] });
+  assert.deepEqual(r, { ok: true, deleted: [{ id: 21, name: "Title" }, { id: 22, name: "Bar L" }, { id: 23, name: "Bar R" }] });
+  assert.equal(modalCount(ps), 1);
+  assert.equal(historyName(ps), "Claude: delete_layer, 3 layers");
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "delete").map((c) => c[1]), [21, 22, 23]);
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [10, 11]);
+});
+
+test("delete_layer with one id in layers names the layer and returns an array", async () => {
+  const ps = makeStub();
+  batchDoc(ps);
+  const r = await edit.delete_layer(ps, { confirm: true, layers: [22] });
+  assert.deepEqual(r.deleted, [{ id: 22, name: "Bar L" }]);
+  assert.equal(historyName(ps), "Claude: delete_layer, Bar L");
+});
+
+test("delete_layer with layers refuses a protected, missing or duplicated id before any step", async () => {
+  const ps = makeStub();
+  batchDoc(ps);
+  ps.doc.layers.find((l) => l.id === 10).isBackgroundLayer = true;
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [21, 10, 22] }), (e) => e.code === "PROTECTED_LAYER" && /10/.test(e.message));
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [21, 999] }), (e) => e.code === "NO_LAYER");
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [21, 21] }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [] }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layer: 21, layers: [22] }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(edit.delete_layer(ps, { confirm: true }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(edit.delete_layer(ps, { layers: [21] }), (e) => e.code === "CONFIRM_REQUIRED");
+  assert.equal(modalCount(ps), 0);
+  assert.equal(ps.calls.some((c) => c[0] === "delete"), false);
+});
+
+test("delete_layer with layers skips ids whose group is also listed", async () => {
+  const ps = makeStub();
+  const child = { id: 31, name: "Child", kind: "pixel", delete: async () => ps.calls.push(["delete", 31]) };
+  const group = withDelete(ps, { id: 30, name: "Group", kind: "group", layers: [child] });
+  ps.doc.layers.unshift(group);
+  const r = await edit.delete_layer(ps, { confirm: true, layers: [31, 30] });
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "delete").map((c) => c[1]), [30]);
+  assert.deepEqual(r.deleted, [{ id: 31, name: "Child" }, { id: 30, name: "Group" }]);
+});
+
+test("delete_layer with layers rolls back every delete when one fails", async () => {
+  const ps = makeStub();
+  const [, b] = batchDoc(ps);
+  b.delete = async () => {
+    throw new Error("locked");
+  };
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [21, 22, 23] }), /locked/);
+  assert.deepEqual(ps.calls.find((c) => c[0] === "resumeHistory"), ["resumeHistory", 7, false]);
+});
+
 // ---------- set_adjustment ----------
 
 function withKinds(ps, kinds, lightIds = []) {
