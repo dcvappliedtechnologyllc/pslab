@@ -234,3 +234,23 @@ test("region_stats reports the returned bbox and a warning on a mismatch", async
   assert.deepEqual(r.bbox, { left: 500, top: 500, right: 1524, bottom: 1000 });
   assert.match(r.warning, /instead of the requested/);
 });
+
+test("region_stats on a layer ignores layer-clipped sourceBounds (no reconcile, no warning)", async () => {
+  // a layer read reports sourceBounds clipped to the layer's own bounds
+  const ps = stubReturning({ left: 1200, top: 1100, right: 1400, bottom: 1300 }, 0);
+  const bbox = { left: 1000, top: 1000, right: 2024, bottom: 1500 };
+  const r = await region_stats(ps, { bbox, layer: 33 });
+  assert.equal(getPixelsOpts(ps).layerID, 33);
+  assert.deepEqual(r.bbox, bbox);
+  assert.equal(r.warning, undefined);
+  assert.equal(r.layer, 33);
+});
+
+test("get_document: modal is null normally", async () => {
+  const { get_document } = require("../lib/actions/see");
+  const ps = makeStub({ docs: [{ id: 5, name: "a.psd", width: 3000, height: 2000, layers: [] }] });
+  ps.action = { async batchPlay(descs) { return descs.map(() => ({})); } };
+  const r = await get_document(ps, {});
+  assert.equal(r.modal, null);
+  assert.equal(r.id, 5);
+});

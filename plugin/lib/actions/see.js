@@ -86,7 +86,11 @@ async function region_stats(ps, args = {}) {
       }
       const data = await imageData.getData({ chunky: true });
       const stats = regionStats(data, imageData.width, imageData.height);
-      const { region: used, mismatch } = reconcileBounds(bbox, got.sourceBounds, got.level);
+      // a layer read reports sourceBounds clipped to the layer, not a shifted
+      // read, so only composite reads are reconciled
+      const { region: used, mismatch } = layer === undefined
+        ? reconcileBounds(bbox, got.sourceBounds, got.level)
+        : { region: bbox, mismatch: false };
       const out = { ...stats, bbox: used };
       if (layer !== undefined) out.layer = layer;
       if (mismatch) out.warning = mismatchWarning(bbox, used, got.level);
