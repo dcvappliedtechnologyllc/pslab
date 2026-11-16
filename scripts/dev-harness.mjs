@@ -22,6 +22,7 @@ import { registerOutputTools } from "../server/dist/tools/output.js";
 import { registerMaskTools } from "../server/dist/tools/masks.js";
 import { registerGeometryTools } from "../server/dist/tools/geometry.js";
 import { registerWorkflowTools } from "../server/dist/tools/workflow.js";
+import { registerLayerTools } from "../server/dist/tools/layers.js";
 
 const { port } = resolvePort(process.env.PSLAB_PORT);
 const bridge = new PluginBridge({ port, timeoutMs: 60000 });
@@ -37,6 +38,7 @@ registerOutputTools(server, bridge);
 registerMaskTools(server, bridge);
 registerGeometryTools(server, bridge);
 registerWorkflowTools(server, bridge);
+registerLayerTools(server, bridge);
 const [a, b] = InMemoryTransport.createLinkedPair();
 await server.connect(a);
 const client = new Client({ name: "harness", version: "0" });

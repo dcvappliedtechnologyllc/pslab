@@ -8,6 +8,7 @@ const output = require("./output");
 const geometry = require("./geometry");
 const workflow = require("./workflow");
 const masks = require("./masks");
+const layers = require("./layers");
 
 module.exports = {
   get_document: see.get_document,
@@ -45,4 +46,5 @@ module.exports = {
   open_folder: workflow.open_folder,
   compare_preview: workflow.compare_preview,
   contact_sheet: workflow.contact_sheet,
+  select_layer: layers.select_layer,
 };
