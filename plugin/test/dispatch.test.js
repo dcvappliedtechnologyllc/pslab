@@ -177,6 +177,27 @@ test("errors outside the modal-suspect set are never probed; no hook means no pr
   assert.equal(p.probes.length, 0);
 });
 
+test("a MODAL_BUSY from validation passes through unchanged, without a second probe", async () => {
+  const p = modalPs({ probeThrows: true, tool: "cropTool" });
+  const busy = async () => {
+    throw Object.assign(new Error("Photoshop is in a modal state (crop); commit or cancel it, then retry"), { code: "MODAL_BUSY" });
+  };
+  const dispatch = createDispatcher(p, { busy }, { docSummary: summary, modalState: (x, d) => modalState(x, d) });
+  const r = await dispatch(req("r-1", "busy", {}));
+  assert.deepEqual(r.error, { code: "MODAL_BUSY", message: "Photoshop is in a modal state (crop); commit or cancel it, then retry" });
+  assert.equal(p.probes.length, 0);
+});
+
+test("NO_LAYER stays NO_LAYER when the modal probe itself throws", async () => {
+  const p = modalPs({ probeThrows: false });
+  const throwing = async () => {
+    throw new Error("probe broke");
+  };
+  const dispatch = createDispatcher(p, { set_layer: noLayer }, { docSummary: summary, modalState: throwing });
+  const r = await dispatch(req("r-1", "set_layer", { layer: 7 }));
+  assert.deepEqual(r.error, { code: "NO_LAYER", message: "No layer with id 7" });
+});
+
 test("modalState classifies by tool, hint, busy (error 9) and unknown (brush/move are not transform)", async () => {
   assert.equal(await modalState(modalPs({ probeThrows: false }), null), null);
   assert.equal(await modalState(modalPs({ probeThrows: true, tool: "cropTool" }), null), "crop");

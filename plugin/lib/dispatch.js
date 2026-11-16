@@ -28,8 +28,9 @@ function summaryTarget(ps, args) {
 
 // Errors a Photoshop modal state (a crop, Free Transform, text editing, a
 // dialog) can masquerade as: the layer tree shows "Crop Preview", ids vanish,
-// batchPlay or the modal scope fails.
-const MODAL_SUSPECT = new Set(["NO_LAYER", "NO_DOCUMENT", "BATCHPLAY", "MODAL_FAILED", "STEP_FAILED", "MODAL_BUSY"]);
+// batchPlay or the modal scope fails. MODAL_BUSY is not here: it already
+// carries the kind, so it passes through without a second probe.
+const MODAL_SUSPECT = new Set(["NO_LAYER", "NO_DOCUMENT", "BATCHPLAY", "MODAL_FAILED", "STEP_FAILED"]);
 
 // Returns (frame) => Promise<response frame>. The promise never rejects.
 // opts.docSummary(ps, doc) builds the summary sent with every ok response;
