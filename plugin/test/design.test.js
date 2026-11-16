@@ -361,6 +361,36 @@ test("set_layer_style merges partial params over the current shadow, keeps the s
   assert.deepEqual(set.to.dropShadow.noise, pct(7), "current extras kept");
 });
 
+test("set_layer_style keeps Use Global Light when no angle is given; an angle turns it off", async () => {
+  const globalShadow = { ...CURRENT_SHADOW, useGlobalAngle: true, localLightingAngle: { _unit: "angleUnit", _value: 30 } };
+  let ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), dropShadow: globalShadow } }) });
+  await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: { opacity: 50 } });
+  let ds = styleSet(ps).to.dropShadow;
+  assert.equal(ds.useGlobalAngle, true, "global light kept");
+  assert.deepEqual(ds.localLightingAngle, { _unit: "angleUnit", _value: 30 }, "local angle not rewritten");
+  // a global shadow whose get carries no local angle gets none written
+  const { localLightingAngle, ...noLocal } = globalShadow;
+  ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), dropShadow: noLocal } }) });
+  await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", enabled: false });
+  ds = styleSet(ps).to.dropShadow;
+  assert.equal(ds.useGlobalAngle, true);
+  assert.equal("localLightingAngle" in ds, false);
+  ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), dropShadow: globalShadow } }) });
+  await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", params: { angle: 45 } });
+  ds = styleSet(ps).to.dropShadow;
+  assert.equal(ds.useGlobalAngle, false);
+  assert.deepEqual(ds.localLightingAngle, { _unit: "angleUnit", _value: 45 });
+});
+
+test("add_layer_style turns Use Global Light off even over a global shadow", async () => {
+  const globalShadow = { ...CURRENT_SHADOW, useGlobalAngle: true };
+  const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), dropShadow: globalShadow } }) });
+  await design.add_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow" });
+  const ds = styleSet(ps).to.dropShadow;
+  assert.equal(ds.useGlobalAngle, false);
+  assert.equal(ds.localLightingAngle._value, 120);
+});
+
 test("set_layer_style enabled false turns the shadow off without changing values", async () => {
   const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100), dropShadow: CURRENT_SHADOW } }) });
   const r = await design.set_layer_style(ps, { doc: 1, layer: 3, style: "drop_shadow", enabled: false });

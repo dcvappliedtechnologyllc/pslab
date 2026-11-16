@@ -211,12 +211,18 @@ function currentShadow(existing) {
 // The `set layerEffects` descriptor: the recorded drop shadow (or, with
 // keepCurrent, the layer's current one over it) with full params applied,
 // merged into the layer's other effects. The scale is the existing one, else
-// 100 * ppi / 72. Use Global Light is always off (angle is per layer).
-function shadowSet(rec, existing, full, { keepCurrent = false, enabled, ppi } = {}) {
+// 100 * ppi / 72. Use Global Light is off (angle is per layer), except with
+// globalAngle: the current shadow follows Global Light and no angle was given,
+// so it stays on and the local angle is not written.
+function shadowSet(rec, existing, full, { keepCurrent = false, enabled, ppi, globalAngle = false } = {}) {
   const template = clone(rec);
   const current = keepCurrent ? currentShadow(existing) : null;
   if (current) template.set.to.dropShadow = { ...template.set.to.dropShadow, ...clone(current) };
   const fields = { ...template.fields };
+  if (globalAngle) {
+    delete fields.angle;
+    if (!(current && "localLightingAngle" in current)) delete template.set.to.dropShadow.localLightingAngle;
+  }
   // a colour we cannot read (not RGB) stays as it is unless one is given
   if (!full.color) for (const k of ["color_r", "color_g", "color_b"]) delete fields[k];
   else if (template.set.to.dropShadow.color && template.set.to.dropShadow.color._obj !== "RGBColor") {
@@ -228,7 +234,7 @@ function shadowSet(rec, existing, full, { keepCurrent = false, enabled, ppi } = 
   const [set] = applyParams(template, E.flatShadow(full, scale));
   const shadow = set.to.dropShadow;
   shadow.mode = { _enum: "blendMode", _value: E.blendValue(full.blend) };
-  shadow.useGlobalAngle = false;
+  shadow.useGlobalAngle = globalAngle;
   if (enabled !== undefined) shadow.enabled = enabled;
   set.to = { ...E.mergeEffects(existing, "dropShadow", shadow), scale: set.to.scale };
   return set;
@@ -265,7 +271,8 @@ async function set_layer_style(ps, args = {}) {
   if (!current) throw codedError("NO_STYLE", `Layer ${layer.id} (${nameOf(layer)}) has no ${args.style}; use add_layer_style`);
   const full = E.shadowParams(params, E.shadowFromDescriptor(current));
   const enabled = given(args.enabled) ? args.enabled : undefined;
-  const desc = shadowSet(rec, existing, full, { keepCurrent: true, enabled, ppi: Number(safe(() => d.resolution, 72)) });
+  const globalAngle = current.useGlobalAngle === true && params.angle === undefined;
+  const desc = shadowSet(rec, existing, full, { keepCurrent: true, enabled, globalAngle, ppi: Number(safe(() => d.resolution, 72)) });
   const parts = changed.slice(0, 2).map(([k, v]) => fmtParam(k, v));
   if (enabled !== undefined) parts.push(enabled ? "on" : "off");
   return stepIn(ps, `Claude: set_layer_style, ${args.style} ${parts.join(" ")}`, d, async () => {
