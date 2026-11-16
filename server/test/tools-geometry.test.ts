@@ -187,4 +187,17 @@ describe("geometry tools over MCP", () => {
     expect(tools.find((x) => x.name === "clone_from")!.description).toContain("stamp_visible");
     expect(tools.find((x) => x.name === "content_aware_fill")!.description).toContain("whole canvas");
   });
+
+  it("clone_from and content_aware_fill forward above and say the fill still samples everything visible", async () => {
+    const bbox = { left: 10, top: 10, right: 50, bottom: 50 };
+    await client.callTool({ name: "content_aware_fill", arguments: { bbox, name: "L", above: 1 } });
+    await client.callTool({ name: "clone_from", arguments: { src_bbox: bbox, dst: { x: 0, y: 0 }, name: "C", above: 1 } });
+    expect(seen).toEqual([
+      { action: "content_aware_fill", args: { bbox, name: "L", above: 1 } },
+      { action: "clone_from", args: { src_bbox: bbox, dst: { x: 0, y: 0 }, name: "C", above: 1 } },
+    ]);
+    const { tools } = await client.listTools();
+    expect(tools.find((x) => x.name === "content_aware_fill")!.description).toContain("samples everything visible");
+    expect(tools.find((x) => x.name === "clone_from")!.description).toContain("samples everything visible");
+  });
 });

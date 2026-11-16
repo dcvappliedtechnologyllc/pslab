@@ -234,8 +234,13 @@ async function content_aware_fill(ps, args = {}) {
     );
   }
 
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(d, args.above);
+
   return stepIn(ps, `Claude: content_aware_fill, ${args.name}`, d, async () => {
-    const layer = await stampOnTop(ps, d, args.name);
+    // The stamp is taken on top (it samples everything visible); `above` only
+    // moves the finished patch.
+    let layer = await stampOnTop(ps, d, args.name);
     // Fill the region (plus a 2 px apron so the patch blends at its edge) on
     // the stamped copy, then erase everything else so only the patch remains.
     await bp(ps, [
@@ -246,6 +251,7 @@ async function content_aware_fill(ps, args = {}) {
       D.clearSelected(),
       D.deselect(),
     ]);
+    if (hasAbove) layer = await placeAbove(ps, d, layer, args.above);
     const after = findLayer(d, layer.id) || layer;
     return { layer_id: layer.id, bounds: norm(after.bounds) };
   });
@@ -276,9 +282,11 @@ async function clone_from(ps, args = {}) {
   const dx = dst.x - src.left;
   const dy = dst.y - src.top;
   const fullCanvas = coversCanvas(src, w, h);
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(d, args.above);
 
   return stepIn(ps, `Claude: clone_from, ${args.name}`, d, async () => {
-    const layer = await stampOnTop(ps, d, args.name);
+    let layer = await stampOnTop(ps, d, args.name);
     // Keep only src_bbox of the stamped composite, then move it so its
     // top-left corner lands on dst. Bug 10: on the full canvas there is
     // nothing to erase, and Delete on the empty inverse raises a blocking
@@ -297,6 +305,7 @@ async function clone_from(ps, args = {}) {
         D.deselect(),
       ]);
     }
+    if (hasAbove) layer = await placeAbove(ps, d, layer, args.above);
     const after = findLayer(d, layer.id) || layer;
     return { layer_id: layer.id, bounds: norm(after.bounds), feather_px: f };
   });

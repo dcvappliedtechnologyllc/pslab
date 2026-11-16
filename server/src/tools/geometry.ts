@@ -68,12 +68,16 @@ export function registerGeometryTools(server: McpServer, bridge: PluginBridge): 
         "its surroundings, and everything outside it is erased, so the layer holds only the patch. The Background " +
         "and other layers are untouched; hide or delete the patch layer to undo the look. Layers added later above " +
         "it are not part of the fill. A region that (with the 2 px growth) covers the whole canvas is refused with " +
-        "INVALID_ARGS: there would be nothing left to sample. Returns layer_id and the patch bounds. One undoable history step.",
+        "INVALID_ARGS: there would be nothing left to sample. above (a layer id) moves the finished patch directly above " +
+        "that layer, e.g. the Background so it sits under adjustment and text layers; the fill still samples " +
+        "everything visible, so hide text and lighting layers first if they cover the area. Returns layer_id and the " +
+        "patch bounds. One undoable history step.",
       inputSchema: {
         doc: z.number().int().optional().describe("Document id; defaults to the active document"),
         bbox: box.optional().describe("Region to fill in image pixels (left < right, top < bottom); or give polygon"),
         polygon: z.array(point).min(3).optional().describe("Region to fill as polygon corners in image pixels; or give bbox"),
         name: z.string().min(1).describe('Name for the new patch layer, e.g. "Outlet removed"'),
+        above: z.number().int().optional().describe("Layer id the patch goes directly above; default: top of the stack"),
       },
     },
     async (args) => {
@@ -94,7 +98,8 @@ export function registerGeometryTools(server: McpServer, bridge: PluginBridge): 
         "lands at dst (image pixels; src_bbox and dst inside the canvas). feather_px (default 0, max 200, under half " +
         "the box's shorter side) adds a mask that fades the copy's edge out over that many pixels inside the box, so " +
         "it blends; 0 keeps a hard edge. A src_bbox covering the whole canvas works (nothing is erased); for a plain " +
-        "merged copy of everything visible use stamp_visible. The Background and other layers are untouched. Returns " +
+        "merged copy of everything visible use stamp_visible. above (a layer id) moves the result directly above that " +
+        "layer; the copy still samples everything visible. The Background and other layers are untouched. Returns " +
         "layer_id, bounds and feather_px. One undoable history step.",
       inputSchema: {
         doc: z.number().int().optional().describe("Document id; defaults to the active document"),
@@ -102,6 +107,7 @@ export function registerGeometryTools(server: McpServer, bridge: PluginBridge): 
         dst: point.describe("Where the copy's top-left corner lands, in image pixels"),
         name: z.string().min(1).describe('Name for the new layer, e.g. "Floor patch"'),
         feather_px: z.number().min(0).max(200).optional().describe("Soft edge width in pixels, 0..200; default 0"),
+        above: z.number().int().optional().describe("Layer id the copy goes directly above; default: top of the stack"),
       },
     },
     async (args) => call(bridge, "clone_from", args),

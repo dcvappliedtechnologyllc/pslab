@@ -560,3 +560,38 @@ test("stamp_visible rejects a missing name or anchor before any modal", async ()
     assert.equal(modalCount(ps), 0);
   }
 });
+
+// ---------- A10: above on clone_from and content_aware_fill ----------
+
+test("clone_from with above moves the patch directly above the anchor", async () => {
+  const ps = makeStub();
+  const res = await geometry.clone_from(ps, { doc: 1, src_bbox, dst: { x: 300, y: 250 }, name: "P", above: 1 });
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "move"), [["move", 100, 1, "placeBefore"]]);
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [2, 100, 1]);
+  assert.deepEqual(res.bounds, { left: 300, top: 250, right: 400, bottom: 330 });
+  // the stamp was still taken with the top layer selected
+  assert.deepEqual(allDescs(ps).slice(0, 2), [D.selectLayerById(2), D.stampVisible()]);
+});
+
+test("content_aware_fill with above moves the patch; without above nothing moves", async () => {
+  const bbox = { left: 100, top: 100, right: 200, bottom: 160 };
+  const ps = makeStub();
+  await geometry.content_aware_fill(ps, { doc: 1, bbox, name: "Light removed", above: 1 });
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "move"), [["move", 100, 1, "placeBefore"]]);
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [2, 100, 1]);
+  const plain = makeStub();
+  await geometry.content_aware_fill(plain, { doc: 1, bbox, name: "Light removed" });
+  await geometry.clone_from(plain, { doc: 1, src_bbox, dst: { x: 300, y: 250 }, name: "P" });
+  assert.equal(plain.calls.some((c) => c[0] === "move"), false);
+});
+
+test("clone_from and content_aware_fill with a missing above are NO_LAYER before any modal", async () => {
+  for (const run of [
+    (ps) => geometry.clone_from(ps, { doc: 1, src_bbox, dst: { x: 0, y: 0 }, name: "P", above: 404 }),
+    (ps) => geometry.content_aware_fill(ps, { doc: 1, bbox: { left: 10, top: 10, right: 50, bottom: 50 }, name: "P", above: 404 }),
+  ]) {
+    const ps = makeStub();
+    await assert.rejects(run(ps), { code: "NO_LAYER" });
+    assert.equal(modalCount(ps), 0);
+  }
+});
