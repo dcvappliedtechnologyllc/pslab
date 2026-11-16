@@ -280,6 +280,15 @@ test("move_layer skips layers without bounds and moves a group once with its con
   assert.equal(historyName(ps), "Claude: move_layer, 1 layer 5,0");
 });
 
+test("move_layer keeps a listed child when its listed group has no bounds (the group would not carry it)", async () => {
+  const ps = makeStub();
+  ps.byId(6).boundsNoEffects = { left: 0, top: 0, right: 0, bottom: 0 }; // group reads empty
+  const r = await layers.move_layer(ps, { doc: 1, layers: [6, 7], dx: 5 });
+  assert.deepEqual(r.skipped, [{ id: 6, name: "Group" }]);
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "translate"), [["translate", 7, 5, 0]]);
+  assert.deepEqual(r.moved.map((m) => m.id), [7]);
+});
+
 test("move_layer falls back to a transform offset when the DOM translate fails", async () => {
   const ps = makeStub();
   ps.byId(4).translate = async () => {

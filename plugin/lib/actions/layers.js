@@ -137,24 +137,25 @@ const plural = (n) => `${n} layer${n === 1 ? "" : "s"}`;
 const has = (v) => typeof v === "number" && Number.isFinite(v);
 
 // The layers a move or align acts on: listed, existing, distinct, never the
-// Background; a layer whose group is also listed moves with the group, so it
-// is dropped. Layers without pixels (empty, or an adjustment without a mask)
-// have no bounds and are reported in skipped.
+// Background. Layers without pixels (empty, or an adjustment without a mask)
+// have no bounds and are reported in skipped. A layer whose group is also
+// live moves with the group, so it is dropped; a group that is skipped does
+// not move, so its listed children still do.
 function moveTargets(d, ids) {
   const list = requireLayerList(d, ids, 50);
   for (const layer of list) requireMovable(d, layer.id);
-  const listed = new Set(ids);
-  const own = list.filter((layer) => {
-    const at = locate(d, layer.id);
-    return !(at && at.parents.some((p) => listed.has(p.id)));
-  });
-  const live = [];
+  const withBounds = [];
   const skipped = [];
-  for (const layer of own) {
+  for (const layer of list) {
     const bounds = layerBounds(layer);
-    if (bounds) live.push({ layer, bounds });
+    if (bounds) withBounds.push({ layer, bounds });
     else skipped.push({ id: layer.id, name: nameOf(layer) });
   }
+  const liveIds = new Set(withBounds.map((t) => t.layer.id));
+  const live = withBounds.filter(({ layer }) => {
+    const at = locate(d, layer.id);
+    return !(at && at.parents.some((p) => liveIds.has(p.id)));
+  });
   return { live, skipped };
 }
 
