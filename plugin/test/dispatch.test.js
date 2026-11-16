@@ -177,12 +177,16 @@ test("errors outside the modal-suspect set are never probed; no hook means no pr
   assert.equal(p.probes.length, 0);
 });
 
-test("modalState classifies by tool, hint, busy (error 9) and unknown", async () => {
+test("modalState classifies by tool, hint, busy (error 9) and unknown (brush/move are not transform)", async () => {
   assert.equal(await modalState(modalPs({ probeThrows: false }), null), null);
   assert.equal(await modalState(modalPs({ probeThrows: true, tool: "cropTool" }), null), "crop");
   assert.equal(await modalState(modalPs({ probeThrows: true, tool: "typeCreateOrEditTool" }), null), "text");
   assert.equal(await modalState(modalPs({ probeThrows: true, tool: "typeVerticalCreateOrEditTool" }), null), "text");
-  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "moveTool" }), null), "transform");
+  // Free Transform runs on whatever tool is selected; only marquee tools are known to mean it
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "marqueeRectTool" }), null), "transform");
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "marqueeEllipTool" }), null), "transform");
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "moveTool" }), null), "unknown");
+  assert.equal(await modalState(modalPs({ probeThrows: true, tool: "paintbrushTool" }), null), "unknown");
   assert.equal(await modalState(modalPs({ probeThrows: true, number: 9, tool: "moveTool" }), null), "busy");
   assert.equal(await modalState(modalPs({ probeThrows: true }), null), "unknown");
   // a hint from Photoshop's modal events wins over the tool read

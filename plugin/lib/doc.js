@@ -288,7 +288,18 @@ function hasLayerNamed(doc, name) {
   return collectLayers(safe(() => doc.layers, null)).some((l) => safe(() => l.name, "") === name);
 }
 
-// The kind for Photoshop's current tool while it is modal; null if unreadable.
+// Free Transform keeps the selected tool, so the tool id only proves a
+// transform for tools that open one (marquee tools, live-recorded as "Rect").
+// Anything else (brush, move, ...) is not evidence and reads as null.
+const TRANSFORM_TOOLS = new Set([
+  "marqueeRectTool",
+  "marqueeEllipTool",
+  "marqueeSingleRowTool",
+  "marqueeSingleColumnTool",
+]);
+
+// The kind for Photoshop's current tool while it is modal; null if unreadable
+// or not a known modal tool.
 async function toolKind(ps) {
   try {
     const res = await ps.action.batchPlay(
@@ -304,7 +315,8 @@ async function toolKind(ps) {
     if (typeof id !== "string" || id === "") return null;
     if (id === "cropTool") return "crop";
     if (id === "typeCreateOrEditTool" || id === "typeVerticalCreateOrEditTool") return "text";
-    return "transform";
+    if (TRANSFORM_TOOLS.has(id)) return "transform";
+    return null;
   } catch {
     return null;
   }
