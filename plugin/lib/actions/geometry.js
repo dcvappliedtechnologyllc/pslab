@@ -4,7 +4,7 @@
 // rejected call never creates a history state.
 const D = require("../descriptors");
 const { runStep, runRead, bp } = require("../step");
-const { findLayer, resolveDoc } = require("../doc");
+const { findLayer, resolveDoc, normEdges: norm } = require("../doc");
 const { estimateTilt, toGray, round1 } = require("../geometry");
 
 function codedError(code, message) {
@@ -48,17 +48,6 @@ const activeId = (d) => {
   if (!layer) throw codedError("NO_NEW_LAYER", "The new layer was not found after creating it");
   return layer.id;
 };
-
-// A bounds edge may be a number or a unit value ({_value} or {value}).
-function edge(v) {
-  if (v !== null && typeof v === "object") v = "_value" in v ? v._value : v.value;
-  return Number(v);
-}
-
-function norm(b) {
-  if (!b) return null;
-  return { left: edge(b.left), top: edge(b.top), right: edge(b.right), bottom: edge(b.bottom) };
-}
 
 const canvas = (d) => ({ w: Number(d.width), h: Number(d.height) });
 

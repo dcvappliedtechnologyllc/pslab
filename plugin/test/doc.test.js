@@ -32,7 +32,7 @@ function makeDoc(id, name, layers, extra = {}) {
   };
 }
 
-function makeStub({ docs = [], masked = [] } = {}) {
+function makeStub({ docs = [], masked = [], disabled = [], enabledThrows = false } = {}) {
   const calls = [];
   return {
     calls,
@@ -46,6 +46,10 @@ function makeStub({ docs = [], masked = [] } = {}) {
       batchPlay(descriptors, options) {
         calls.push({ descriptors, options });
         const d = descriptors[0];
+        if (d._obj === "get" && d._target[0]._property === "userMaskEnabled") {
+          if (enabledThrows) throw new Error("no enabled");
+          return descriptors.map((x) => ({ userMaskEnabled: !disabled.includes(x._target[1]._id) }));
+        }
         if (d._obj === "get") {
           const ids = descriptors.map((x) => x._target[1]._id);
           if (ids.includes(999)) throw new Error("boom");
@@ -95,6 +99,8 @@ test("docSummary maps document fields and nests groups as children", async () =>
     blend: "normal",
     clipped: false,
     hasMask: true,
+    maskEnabled: true,
+    bounds: null,
     children: [],
   });
   const deep = group.children[1].children[0];
@@ -116,7 +122,8 @@ test("when the batched mask query throws, each layer is asked alone and a failin
   const s = await docSummary(ps, doc);
   assert.equal(s.layers[0].hasMask, false);
   assert.equal(s.layers[1].hasMask, true);
-  assert.deepEqual(ps.calls.map((c) => c.descriptors.length), [2, 1, 1]);
+  // two per-layer has-mask asks after the batch failed, then one enabled read for the masked layer
+  assert.deepEqual(ps.calls.map((c) => c.descriptors.length), [2, 1, 1, 1]);
 });
 
 test("hasMask is one batchPlay for the whole tree, targeting layer and document by id", async () => {
@@ -261,4 +268,108 @@ test("docSummary keeps the raw kind when the adjustment query throws", async () 
   const { docSummary } = require("../lib/doc");
   const s = await docSummary(ps, docs[0]);
   assert.equal(s.layers[0].kind, "brightnessContrast");
+});
+
+// ---------- A1: bounds, maskEnabled, text ----------
+
+const { normBounds, layerBounds } = require("../lib/doc");
+
+test("normBounds unwraps unit values and is null for an empty box", () => {
+  assert.deepEqual(normBounds({ left: 1, top: 2, right: 3, bottom: 4 }), { left: 1, top: 2, right: 3, bottom: 4 });
+  assert.deepEqual(
+    normBounds({ left: { _value: 10 }, top: { value: 20 }, right: { _unit: "pixelsUnit", _value: 30 }, bottom: 40 }),
+    { left: 10, top: 20, right: 30, bottom: 40 },
+  );
+  assert.equal(normBounds({ left: 0, top: 0, right: 0, bottom: 0 }), null);
+  assert.equal(normBounds({ left: 5, top: 0, right: 5, bottom: 9 }), null);
+  assert.equal(normBounds({ left: 0, top: 9, right: 5, bottom: 3 }), null);
+  assert.equal(normBounds(null), null);
+  assert.equal(normBounds({ left: "x", top: 0, right: 1, bottom: 1 }), null);
+});
+
+test("layerBounds prefers boundsNoEffects and falls back to bounds", () => {
+  assert.deepEqual(
+    layerBounds({ boundsNoEffects: { left: 10, top: 10, right: 20, bottom: 20 }, bounds: { left: 4, top: 4, right: 26, bottom: 30 } }),
+    { left: 10, top: 10, right: 20, bottom: 20 },
+  );
+  const throwing = { bounds: { left: 1, top: 2, right: 3, bottom: 4 } };
+  Object.defineProperty(throwing, "boundsNoEffects", { get() { throw new Error("nope"); } });
+  assert.deepEqual(layerBounds(throwing), { left: 1, top: 2, right: 3, bottom: 4 });
+  assert.equal(layerBounds({ bounds: { left: 0, top: 0, right: 0, bottom: 0 } }), null);
+  assert.equal(layerBounds({}), null);
+});
+
+test("docSummary reports bounds per layer: unit edges, an empty adjustment is null", async () => {
+  const doc = makeDoc(10, "b.psd", [
+    layer(1, "Title", { kind: "text", boundsNoEffects: { left: { _value: 200 }, top: { _value: 567 }, right: { _value: 2250 }, bottom: { _value: 681 } } }),
+    layer(2, "Levels", { kind: "levels", bounds: { left: 0, top: 0, right: 0, bottom: 0 } }),
+    layer(3, "Background", { bounds: { left: 0, top: 0, right: 4000, bottom: 3000 } }),
+  ]);
+  const s = await docSummary(makeStub({ docs: [doc] }), doc);
+  assert.deepEqual(s.layers[0].bounds, { left: 200, top: 567, right: 2250, bottom: 681 });
+  assert.equal(s.layers[1].bounds, null);
+  assert.deepEqual(s.layers[2].bounds, { left: 0, top: 0, right: 4000, bottom: 3000 });
+});
+
+test("maskEnabled is true, false or null (no mask); enabled is read only for masked layers", async () => {
+  const doc = makeDoc(10, "m.psd", [layer(1, "On"), layer(2, "Off"), layer(3, "None")]);
+  const ps = makeStub({ docs: [doc], masked: [1, 2], disabled: [2] });
+  const s = await docSummary(ps, doc);
+  assert.deepEqual(s.layers.map((l) => [l.hasMask, l.maskEnabled]), [[true, true], [true, false], [false, null]]);
+  const enabledCalls = ps.calls.filter((c) => c.descriptors[0]._target[0]._property === "userMaskEnabled");
+  assert.equal(enabledCalls.length, 1);
+  assert.deepEqual(enabledCalls[0].descriptors.map((d) => d._target[1]._id), [1, 2]);
+  assert.deepEqual(enabledCalls[0].descriptors[0]._target[2], { _ref: "document", _id: 10 });
+});
+
+test("no enabled read without masks; a failed enabled read gives null", async () => {
+  const doc = makeDoc(10, "m.psd", [layer(1, "A"), layer(2, "B")]);
+  const ps = makeStub({ docs: [doc] });
+  await docSummary(ps, doc);
+  assert.equal(ps.calls.length, 1);
+  const ps2 = makeStub({ docs: [doc], masked: [2], enabledThrows: true });
+  const s = await docSummary(ps2, doc);
+  assert.deepEqual(s.layers.map((l) => [l.hasMask, l.maskEnabled]), [[false, null], [true, null]]);
+});
+
+function textLayer(id, extra = {}) {
+  return layer(id, "Title", {
+    kind: "text",
+    bounds: { left: 10, top: 20, right: 110, bottom: 60 },
+    textItem: {
+      contents: "MY ROOM",
+      characterStyle: { font: "Montserrat-Bold", size: { _unit: "pointsUnit", _value: 48.004 }, color: { rgb: { red: 255, green: 254.6, blue: 250 } } },
+      paragraphStyle: { justification: "center" },
+    },
+    ...extra,
+  });
+}
+
+test("text properties appear only with detail (get_document)", async () => {
+  const doc = makeDoc(10, "t.psd", [textLayer(1), layer(2, "Bg")]);
+  const plain = await docSummary(makeStub({ docs: [doc] }), doc);
+  assert.equal(plain.layers[0].text, undefined);
+  const s = await docSummary(makeStub({ docs: [doc] }), doc, { detail: true });
+  assert.deepEqual(s.layers[0].text, {
+    content: "MY ROOM",
+    font: "Montserrat-Bold",
+    style: "Bold",
+    size_pt: 48,
+    color: { r: 255, g: 255, b: 250 },
+    justification: "center",
+  });
+  assert.equal(s.layers[1].text, undefined);
+  const viaTool = await get_document(makeStub({ docs: [doc] }), {});
+  assert.equal(viaTool.layers[0].text.content, "MY ROOM");
+});
+
+test("a failed text read is null, the rest still reads; fontStyle wins over the parsed name", async () => {
+  const item = {
+    contents: "Hi",
+    characterStyle: { font: "Arial", fontStyle: "Italic", size: 12 },
+  };
+  Object.defineProperty(item, "paragraphStyle", { get() { throw new Error("no para"); } });
+  const doc = makeDoc(10, "t.psd", [textLayer(1, { textItem: item })]);
+  const s = await docSummary(makeStub({ docs: [doc] }), doc, { detail: true });
+  assert.deepEqual(s.layers[0].text, { content: "Hi", font: "Arial", style: "Italic", size_pt: 12, color: null, justification: null });
 });

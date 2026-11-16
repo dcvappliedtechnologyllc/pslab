@@ -4,7 +4,7 @@
 // Validation happens before runStep so a rejected call never creates a state.
 const D = require("../descriptors");
 const { runStep, runSteps, runRead, bp } = require("../step");
-const { findLayer, resolveDoc, hasUserMaskStrict } = require("../doc");
+const { findLayer, resolveDoc, normEdges: norm, hasUserMaskStrict } = require("../doc");
 const { clampBbox } = require("../stats");
 const defaultRecorded = require("../recorded/index");
 
@@ -26,17 +26,6 @@ const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 function validBbox(bbox) {
   return !!bbox && ["left", "top", "right", "bottom"].every((k) => isNum(bbox[k])) &&
     bbox.left < bbox.right && bbox.top < bbox.bottom;
-}
-
-// A bounds edge may be a number or a unit value ({_value} or {value}).
-function edge(v) {
-  if (v !== null && typeof v === "object") v = "_value" in v ? v._value : v.value;
-  return Number(v);
-}
-
-function norm(b) {
-  if (!b) return null;
-  return { left: edge(b.left), top: edge(b.top), right: edge(b.right), bottom: edge(b.bottom) };
 }
 
 const isEmpty = (b) =>

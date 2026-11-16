@@ -28,13 +28,15 @@ function finite(read) {
   return Number.isFinite(n) ? n : 0;
 }
 
-function maskDescriptor(docId, id) {
+function propDescriptor(docId, id, property) {
   return {
     _obj: "get",
-    _target: [{ _property: "hasUserMask" }, { _ref: "layer", _id: id }, { _ref: "document", _id: docId }],
+    _target: [{ _property: property }, { _ref: "layer", _id: id }, { _ref: "document", _id: docId }],
     _options: { dialogOptions: "dontDisplay" },
   };
 }
+
+const maskDescriptor = (docId, id) => propDescriptor(docId, id, "hasUserMask");
 
 function collectIds(layers, ids = []) {
   for (const layer of list(layers)) {
@@ -44,9 +46,9 @@ function collectIds(layers, ids = []) {
   return ids;
 }
 
-// One batchPlay for the whole tree; if it throws, ask per layer (false on error).
-async function maskMap(ps, doc) {
-  const ids = collectIds(doc.layers);
+// Has-mask flags: one batchPlay for the whole tree; if it throws, ask per
+// layer (false on error). Returns id -> boolean.
+async function hasMaskMap(ps, doc, ids) {
   const masks = new Map();
   if (ids.length === 0) return masks;
   try {
@@ -66,6 +68,95 @@ async function maskMap(ps, doc) {
     }
   }
   return masks;
+}
+
+// id -> {has, enabled}. enabled is read with one more batched get, only for
+// the layers that have a mask; null when the layer has no mask or the read fails.
+async function maskMap(ps, doc) {
+  const ids = collectIds(doc.layers);
+  const has = await hasMaskMap(ps, doc, ids);
+  const masked = ids.filter((id) => has.get(id) === true);
+  const enabled = new Map();
+  if (masked.length > 0) {
+    try {
+      const res = await ps.action.batchPlay(
+        masked.map((id) => propDescriptor(doc.id, id, "userMaskEnabled")),
+        { synchronousExecution: true },
+      );
+      masked.forEach((id, i) => {
+        const v = res && res[i] && res[i].userMaskEnabled;
+        if (typeof v === "boolean") enabled.set(id, v);
+      });
+    } catch {}
+  }
+  const out = new Map();
+  for (const id of ids) {
+    const h = has.get(id) === true;
+    out.set(id, { has: h, enabled: h && enabled.has(id) ? enabled.get(id) : null });
+  }
+  return out;
+}
+
+// A bounds edge may be a number or a unit value ({_value} or {value}).
+function edge(v) {
+  if (v !== null && typeof v === "object") v = "_value" in v ? v._value : v.value;
+  return Number(v);
+}
+
+// {left, top, right, bottom} as plain numbers (unit values unwrapped); null for no box.
+function normEdges(b) {
+  if (!b) return null;
+  return { left: edge(b.left), top: edge(b.top), right: edge(b.right), bottom: edge(b.bottom) };
+}
+
+// Like normEdges, but null for an empty box (all zeros, right <= left,
+// bottom <= top) or one with a non-finite edge.
+function normBounds(b) {
+  const n = normEdges(b);
+  if (!n) return null;
+  if (!Object.values(n).every(Number.isFinite)) return null;
+  if (n.right <= n.left || n.bottom <= n.top) return null;
+  return n;
+}
+
+// Pixel bounds without layer effects (a drop shadow does not move them); null when empty.
+function layerBounds(layer) {
+  return normBounds(safe(() => layer.boundsNoEffects, null) || safe(() => layer.bounds, null));
+}
+
+const nullable = (read) => safe(read, null);
+
+function round(n, places = 0) {
+  const f = 10 ** places;
+  return Math.round(n * f) / f;
+}
+
+// Text properties of a text layer, each null when it cannot be read.
+function textInfo(layer) {
+  const item = nullable(() => layer.textItem);
+  if (!item) return { content: null, font: null, style: null, size_pt: null, color: null, justification: null };
+  const cs = nullable(() => item.characterStyle);
+  const font = cs ? nullable(() => String(cs.font)) : null;
+  let style = cs ? nullable(() => cs.fontStyle) : null;
+  if (style === null && font && font.includes("-")) style = font.slice(font.lastIndexOf("-") + 1);
+  const sizeRaw = cs ? nullable(() => cs.size) : null;
+  const size = sizeRaw === null ? NaN : Number(typeof sizeRaw === "object" ? edge(sizeRaw) : sizeRaw);
+  let color = null;
+  const rgb = cs ? nullable(() => cs.color.rgb) : null;
+  if (rgb) {
+    const c = { r: Number(rgb.red), g: Number(rgb.green), b: Number(rgb.blue) };
+    if (Object.values(c).every(Number.isFinite)) color = { r: round(c.r), g: round(c.g), b: round(c.b) };
+  }
+  const just = nullable(() => item.paragraphStyle.justification);
+  const content = nullable(() => item.contents);
+  return {
+    content: content === null ? null : String(content),
+    font,
+    style: style === null ? null : String(style),
+    size_pt: Number.isFinite(size) ? round(size, 2) : null,
+    color,
+    justification: just === null ? null : String(just),
+  };
 }
 
 function adjustmentDescriptor(docId, id) {
@@ -108,25 +199,32 @@ async function kindOverrides(ps, doc) {
   return kinds;
 }
 
-function layerSummary(layer, masks, kinds = new Map()) {
-  return {
+function layerSummary(layer, masks, kinds = new Map(), detail = false) {
+  const mask = masks.get(layer.id) || { has: false, enabled: null };
+  const kind = kinds.get(layer.id) || String(safe(() => layer.kind, "unknown"));
+  const out = {
     id: layer.id,
     name: String(safe(() => layer.name, "")),
-    kind: kinds.get(layer.id) || String(safe(() => layer.kind, "unknown")),
+    kind,
     visible: !!safe(() => layer.visible, true),
     opacity: Number(safe(() => layer.opacity, 100)),
     blend: String(safe(() => layer.blendMode, "normal")),
     clipped: !!safe(() => layer.isClippingMask, false),
-    hasMask: masks.get(layer.id) === true,
-    children: list(safe(() => layer.layers, null)).map((child) => layerSummary(child, masks, kinds)),
+    hasMask: mask.has === true,
+    maskEnabled: mask.has === true ? mask.enabled : null,
+    bounds: layerBounds(layer),
   };
+  if (detail && kind === "text") out.text = textInfo(layer);
+  out.children = list(safe(() => layer.layers, null)).map((child) => layerSummary(child, masks, kinds, detail));
+  return out;
 }
 
-async function docSummary(ps, doc) {
+// opts.detail (get_document only): text layers also carry their text properties.
+async function docSummary(ps, doc, { detail = false } = {}) {
   if (!doc) return null;
   const masks = await maskMap(ps, doc);
   const kinds = await kindOverrides(ps, doc);
-  const layers = list(doc.layers).map((layer) => layerSummary(layer, masks, kinds));
+  const layers = list(doc.layers).map((layer) => layerSummary(layer, masks, kinds, detail));
   const active = safe(() => list(doc.activeLayers)[0], null);
   return {
     id: doc.id,
@@ -218,4 +316,7 @@ async function selectLayer(ps, doc, id) {
   );
 }
 
-module.exports = { bitsOf, docSummary, findLayer, kindOverrides, selectLayer, hasUserMask, hasUserMaskStrict, resolveDoc };
+module.exports = {
+  bitsOf, docSummary, findLayer, kindOverrides, selectLayer, hasUserMask, hasUserMaskStrict, resolveDoc,
+  normEdges, normBounds, layerBounds, textInfo, safe,
+};

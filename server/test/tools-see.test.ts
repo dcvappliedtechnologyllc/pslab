@@ -60,6 +60,26 @@ describe("see/dev tools over MCP", () => {
     expect((seen as { action: string }).action).toBe("get_document");
   });
 
+  it("get_document passes layer bounds, maskEnabled, text and modal through", async () => {
+    await plugin.connect();
+    const text = { content: "MY ROOM", font: "Montserrat-Bold", style: "Bold", size_pt: 48, color: { r: 255, g: 255, b: 255 }, justification: "center" };
+    const rich = {
+      ...DOC,
+      modal: null,
+      layers: [
+        { id: 2, name: "Title", kind: "text", visible: true, opacity: 100, blend: "normal", clipped: false, hasMask: false,
+          maskEnabled: null, bounds: { left: 200, top: 567, right: 2250, bottom: 681 }, text, children: [] },
+      ],
+    };
+    plugin.onRequest(async () => ({ ok: true, result: { ...rich, open_docs: [{ id: 1, name: "a.psd" }] }, doc: DOC }));
+    const res = await client.callTool({ name: "get_document", arguments: {} });
+    expect(res.isError).toBeFalsy();
+    const out = JSON.parse(textOf(res));
+    expect(out.doc).toEqual(rich);
+    expect(out.doc.layers[0].bounds).toEqual({ left: 200, top: 567, right: 2250, bottom: 681 });
+    expect(out.doc.layers[0].text.content).toBe("MY ROOM");
+  });
+
   it("get_document puts the requested document's summary in doc only once", async () => {
     await plugin.connect();
     const other: DocSummary = { ...DOC, id: 2, name: "b.psd" };

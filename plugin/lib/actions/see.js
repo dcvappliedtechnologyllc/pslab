@@ -6,7 +6,7 @@ const { regionStats, clampBbox } = require("../stats");
 async function get_document(ps, args = {}) {
   const { d, docs } = resolveDoc(ps, args.doc);
   return {
-    ...(await docSummary(ps, d)),
+    ...(await docSummary(ps, d, { detail: true })),
     open_docs: docs.map((x) => ({ id: x.id, name: x.name })),
   };
 }

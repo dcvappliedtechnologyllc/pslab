@@ -20,7 +20,11 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
       annotations: hints.read,
       description:
         "Document summary (size, ppi, profile, bits, layer tree with ids) in doc, plus the list of open documents in " +
-        "result.open_docs. Pass doc to target a document other than the active one. All coordinates everywhere are image pixels.",
+        "result.open_docs. Each layer has bounds {left, top, right, bottom} (pixels, without effects such as a drop " +
+        "shadow; null for an empty layer or an adjustment without a mask) and maskEnabled (null when the layer has no " +
+        "mask; false means the mask exists but is switched off, so the layer acts unmasked). Text layers also carry " +
+        "text {content, font, style, size_pt, color {r,g,b}, justification}. Pass doc to target a document other than " +
+        "the active one. All coordinates everywhere are image pixels.",
       inputSchema: { doc: z.number().int().optional().describe("Document id; defaults to the active document") },
     },
     async (args) => {
