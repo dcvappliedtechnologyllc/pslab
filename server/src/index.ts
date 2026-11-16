@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     console.error(`[pslab] bridge listening on 127.0.0.1:${listening}`);
   }
 
-  const server = new McpServer({ name: "pslab", version: "0.1.0" });
+  const server = new McpServer({ name: "pslab", version: "0.3.0" });
   registerSeeTools(server, bridge);
   registerDevTools(server, bridge);
   registerEditTools(server, bridge);
