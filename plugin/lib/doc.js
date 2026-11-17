@@ -325,7 +325,10 @@ async function toolKind(ps) {
 // null when a modal scope can be entered; otherwise what holds Photoshop:
 // "crop" | "text" | "transform" | "dialog" | "busy" (another plugin, error 9) | "unknown".
 // hint: what Photoshop's own modal events say (dev.modalHint()), used only
-// once the probe has failed; the probe is the source of truth.
+// once the probe has failed; the probe is the source of truth. A tracked
+// dialog wins, then a Crop Preview layer, then a tracked tool modal; "busy"
+// only when no modal is tracked (Free Transform also fails with error 9,
+// live on Photoshop 28.0).
 async function modalState(ps, doc, hint = null) {
   try {
     await ps.core.executeAsModal(async () => {}, {
@@ -336,9 +339,10 @@ async function modalState(ps, doc, hint = null) {
     return null;
   } catch (e) {
     try {
+      if (hint === "dialog") return hint;
       if (doc && hasLayerNamed(doc, "Crop Preview")) return "crop";
-      if (e && e.number === 9) return "busy";
       if (hint) return hint;
+      if (e && e.number === 9) return "busy";
       return (await toolKind(ps)) || "unknown";
     } catch {
       return "unknown";

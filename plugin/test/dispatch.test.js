@@ -214,6 +214,28 @@ test("modalState classifies by tool, hint, busy (error 9) and unknown (brush/mov
   assert.equal(await modalState(modalPs({ probeThrows: true, tool: "moveTool" }), null, "dialog"), "dialog");
 });
 
+test("modalState: a tracked tool modal wins over busy (error 9); a dialog wins over the tool modal", async () => {
+  const { trackModal, classifyModal } = require("../lib/actions/dev");
+  const enter = (ID) => ({ state: { _enum: "state", _value: "enter" }, tool: { ID, title: ID } });
+  const busy = () => modalPs({ probeThrows: true, number: 9, tool: "moveTool" });
+  // Free Transform, live on Photoshop 28.0: the probe fails with error 9
+  const transform = trackModal(undefined, "toolModalStateChanged", enter("Rect"));
+  assert.equal(await modalState(busy(), null, classifyModal(transform)), "transform");
+  const crop = trackModal(undefined, "toolModalStateChanged", enter("Crop"));
+  assert.equal(await modalState(busy(), null, classifyModal(crop)), "crop");
+  const text = trackModal(undefined, "toolModalStateChanged", enter("TypeTool"));
+  assert.equal(await modalState(busy(), null, classifyModal(text)), "text");
+  // a Crop Preview layer means crop even when the tracked tool says transform
+  const previewPs = modalPs({ probeThrows: true, number: 9, layers: [{ id: 2, name: "Crop Preview" }] });
+  assert.equal(await modalState(previewPs, previewPs.app.activeDocument, "transform"), "crop");
+  // a dialog up during a tool modal is reported as the dialog, even over a Crop Preview layer
+  const withDialog = trackModal(transform, "modalStateChanged", { state: { _enum: "state", _value: "enter" }, title: "Warning" });
+  assert.equal(await modalState(busy(), null, classifyModal(withDialog)), "dialog");
+  assert.equal(await modalState(previewPs, previewPs.app.activeDocument, "dialog"), "dialog");
+  // nothing tracked: busy stays busy
+  assert.equal(await modalState(busy(), null, null), "busy");
+});
+
 test("requireNotModal throws MODAL_BUSY with the kind, and passes when not modal", async () => {
   const { requireNotModal } = require("../lib/doc");
   await requireNotModal(modalPs({ probeThrows: false }), null);
