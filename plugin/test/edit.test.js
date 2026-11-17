@@ -118,6 +118,12 @@ const strip = (desc) => {
 };
 const historyName = (ps) => ps.calls.find((c) => c[0] === "suspendHistory")[1].name;
 const modalCount = (ps) => ps.calls.filter((c) => c[0] === "executeAsModal").length;
+// add_adjustment always deselects first (bug 1); the descriptors after that.
+const adjDescs = (ps) => {
+  const ds = allDescs(ps).map(strip);
+  assert.deepEqual(ds[0], d.deselect());
+  return ds.slice(1);
+};
 
 // ---------- add_adjustment ----------
 
@@ -159,7 +165,7 @@ test("light fallback builds group with exposure and curves", async () => {
     });
     assert.equal(historyName(ps), "Claude: add_adjustment light, exposure +0.6 contrast +10");
     assert.equal(r.layer_id, 100); // the group
-    const descs = allDescs(ps).map(strip);
+    const descs = adjDescs(ps);
     assert.deepEqual(descs[0], { _obj: "make", _target: [{ _ref: "layerSection" }], using: { _obj: "layerSection", name: "Light" } });
     assert.deepEqual(descs.slice(1), [
       ...d.makeAdjustment("exposure", { exposure: 0.6 }),
@@ -178,7 +184,7 @@ test("light fallback curve clamps and uses the given group name", async () => {
   try {
     const ps = makeStub();
     await edit.add_adjustment(ps, { type: "light", params: { shadows: -100, highlights: 300, contrast: 100 }, name: "Glare light" });
-    const descs = allDescs(ps).map(strip);
+    const descs = adjDescs(ps);
     assert.equal(descs[0].using.name, "Glare light");
     const curve = descs.find((x) => x._obj === "set").to.adjustment[0].curve.map((p) => [p.horizontal, p.vertical]);
     assert.deepEqual(curve, [[0, 25], [64, 26.5], [192, 255], [255, 255]]);
@@ -202,7 +208,7 @@ test("recorded descriptor gets params substituted along the recorded paths", asy
     const r = await edit.add_adjustment(ps, { type: "clarity_dehaze", params: { clarity: 30, dehaze: -12 } });
     assert.equal(r.layer_id, 100);
     assert.equal(historyName(ps), "Claude: add_adjustment clarity_dehaze, clarity +30 dehaze -12");
-    const [make] = allDescs(ps).map(strip);
+    const [make] = adjDescs(ps);
     assert.equal(make.using.type.clarity, 30);
     assert.deepEqual(make.using.type.dehaze, { _unit: "percentUnit", _value: -12 });
     assert.equal(recorded.make.using.type.clarity, 0, "recorded template not mutated");
@@ -230,6 +236,14 @@ test("applyParams rejects malformed recordings with RECORDED_INVALID", () => {
   assert.deepEqual(ok, [{ _obj: "make", using: { v: 0 } }, { _obj: "set", to: { list: [{ c: 4 }] } }]);
 });
 
+test("applyParams accepts a recorded {set, fields} without make (set. roots only)", () => {
+  const rec = { set: { _obj: "set", to: { a: { _unit: "percentUnit", _value: 1 }, list: [{ i: 0 }] } }, fields: { a: "set.to.a", i: "set.to.list.0.i" } };
+  assert.deepEqual(edit.applyParams(rec, { a: 40, i: 2 }), [{ _obj: "set", to: { a: { _unit: "percentUnit", _value: 40 }, list: [{ i: 2 }] } }]);
+  assert.equal(rec.set.to.a._value, 1, "template not mutated");
+  assert.throws(() => edit.applyParams({ set: { _obj: "set", to: {} }, fields: { a: "make.to" } }, { a: 1 }), (e) => e.code === "RECORDED_INVALID");
+  assert.throws(() => edit.applyParams({ set: "x", fields: {} }), (e) => e.code === "RECORDED_INVALID");
+});
+
 test("curves above a layer, clipped and renamed, in one step", async () => {
   const ps = makeStub();
   const points = { rgb: [[0, 0], [128, 121], [255, 255]] };
@@ -237,7 +251,7 @@ test("curves above a layer, clipped and renamed, in one step", async () => {
   assert.equal(r.layer_id, 100);
   assert.equal(modalCount(ps), 1);
   assert.equal(historyName(ps), "Claude: add_adjustment curves, rgb 3 points");
-  assert.deepEqual(allDescs(ps).map(strip), [
+  assert.deepEqual(adjDescs(ps), [
     d.selectLayerById(11),
     ...d.makeAdjustment("curves", { points }),
     d.selectLayerById(100),
@@ -268,6 +282,35 @@ test("add_pixel_layer makes a named layer and returns its id", async () => {
   assert.deepEqual(r, { layer_id: 100 });
   assert.equal(historyName(ps), "Claude: add_pixel_layer, Paint");
   assert.deepEqual(allDescs(ps).map(strip), [{ _obj: "make", _target: [{ _ref: "layer" }], using: { _obj: "layer", name: "Paint" } }]);
+});
+
+test("add_pixel_layer with above selects the anchor by id before make", async () => {
+  const ps = makeStub();
+  const r = await edit.add_pixel_layer(ps, { name: "P", above: 10 });
+  assert.deepEqual(r, { layer_id: 100 });
+  assert.equal(historyName(ps), "Claude: add_pixel_layer, P");
+  assert.deepEqual(allDescs(ps).map(strip), [
+    { _obj: "select", _target: [{ _ref: "layer", _id: 10 }], makeVisible: false },
+    { _obj: "make", _target: [{ _ref: "layer" }], using: { _obj: "layer", name: "P" } },
+  ]);
+});
+
+test("add_pixel_layer with a missing above layer fails NO_LAYER before any step", async () => {
+  const ps = makeStub();
+  await assert.rejects(edit.add_pixel_layer(ps, { name: "P", above: 404 }), { code: "NO_LAYER" });
+  assert.equal(modalCount(ps), 0);
+});
+
+test("add_pixel_layer above a clipped layer releases the new layer from the clip", async () => {
+  const ps = makeStub();
+  const make = ps.action.batchPlay;
+  ps.action.batchPlay = async (descs) => {
+    const out = await make(descs);
+    if (descs.some((x) => x._obj === "make")) ps.doc.activeLayers[0].isClippingMask = true;
+    return out;
+  };
+  await edit.add_pixel_layer(ps, { name: "P", above: 11 });
+  assert.equal(ps.doc.layers.find((l) => l.id === 100).isClippingMask, false);
 });
 
 // ---------- masks ----------
@@ -513,6 +556,70 @@ test("delete_layer rolls back when the delete fails", async () => {
   assert.deepEqual(ps.calls.find((c) => c[0] === "resumeHistory"), ["resumeHistory", 7, false]);
 });
 
+// ---------- A11: delete_layer with layers ----------
+
+function batchDoc(ps) {
+  const a = withDelete(ps, { id: 21, name: "Title", kind: "text" });
+  const b = withDelete(ps, { id: 22, name: "Bar L", kind: "pixel" });
+  const c = withDelete(ps, { id: 23, name: "Bar R", kind: "pixel" });
+  ps.doc.layers.unshift(a, b, c);
+  return [a, b, c];
+}
+
+test("delete_layer with layers deletes all of them in one named step", async () => {
+  const ps = makeStub();
+  batchDoc(ps);
+  const r = await edit.delete_layer(ps, { confirm: true, layers: [21, 22, 23] });
+  assert.deepEqual(r, { ok: true, deleted: [{ id: 21, name: "Title" }, { id: 22, name: "Bar L" }, { id: 23, name: "Bar R" }] });
+  assert.equal(modalCount(ps), 1);
+  assert.equal(historyName(ps), "Claude: delete_layer, 3 layers");
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "delete").map((c) => c[1]), [21, 22, 23]);
+  assert.deepEqual(ps.doc.layers.map((l) => l.id), [10, 11]);
+});
+
+test("delete_layer with one id in layers names the layer and returns an array", async () => {
+  const ps = makeStub();
+  batchDoc(ps);
+  const r = await edit.delete_layer(ps, { confirm: true, layers: [22] });
+  assert.deepEqual(r.deleted, [{ id: 22, name: "Bar L" }]);
+  assert.equal(historyName(ps), "Claude: delete_layer, Bar L");
+});
+
+test("delete_layer with layers refuses a protected, missing or duplicated id before any step", async () => {
+  const ps = makeStub();
+  batchDoc(ps);
+  ps.doc.layers.find((l) => l.id === 10).isBackgroundLayer = true;
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [21, 10, 22] }), (e) => e.code === "PROTECTED_LAYER" && /10/.test(e.message));
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [21, 999] }), (e) => e.code === "NO_LAYER");
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [21, 21] }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [] }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layer: 21, layers: [22] }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(edit.delete_layer(ps, { confirm: true }), (e) => e.code === "INVALID_ARGS");
+  await assert.rejects(edit.delete_layer(ps, { layers: [21] }), (e) => e.code === "CONFIRM_REQUIRED");
+  assert.equal(modalCount(ps), 0);
+  assert.equal(ps.calls.some((c) => c[0] === "delete"), false);
+});
+
+test("delete_layer with layers skips ids whose group is also listed", async () => {
+  const ps = makeStub();
+  const child = { id: 31, name: "Child", kind: "pixel", delete: async () => ps.calls.push(["delete", 31]) };
+  const group = withDelete(ps, { id: 30, name: "Group", kind: "group", layers: [child] });
+  ps.doc.layers.unshift(group);
+  const r = await edit.delete_layer(ps, { confirm: true, layers: [31, 30] });
+  assert.deepEqual(ps.calls.filter((c) => c[0] === "delete").map((c) => c[1]), [30]);
+  assert.deepEqual(r.deleted, [{ id: 31, name: "Child" }, { id: 30, name: "Group" }]);
+});
+
+test("delete_layer with layers rolls back every delete when one fails", async () => {
+  const ps = makeStub();
+  const [, b] = batchDoc(ps);
+  b.delete = async () => {
+    throw new Error("locked");
+  };
+  await assert.rejects(edit.delete_layer(ps, { confirm: true, layers: [21, 22, 23] }), /locked/);
+  assert.deepEqual(ps.calls.find((c) => c[0] === "resumeHistory"), ["resumeHistory", 7, false]);
+});
+
 // ---------- set_adjustment ----------
 
 function withKinds(ps, kinds, lightIds = []) {
@@ -619,7 +726,7 @@ test("add_adjustment levels makes the layer and sets it in one named step", asyn
   assert.equal(r.layer_id, 100);
   assert.equal(modalCount(ps), 1);
   assert.equal(historyName(ps), "Claude: add_adjustment levels, rgb 0 1.2 240 blue 0 1 230");
-  assert.deepEqual(allDescs(ps).map(strip), d.makeAdjustment("levels", params));
+  assert.deepEqual(adjDescs(ps), d.makeAdjustment("levels", params));
   assert.equal(ps.doc.layers.find((l) => l.id === 100).name, "Lift");
 });
 
@@ -820,4 +927,63 @@ test("white_balance rejects bad args before any modal, and a black patch before 
   ps.doc.mode = "RGBColorMode";
   await assert.rejects(edit.white_balance(ps, { bbox }), (e) => e.code === "DARK_REGION");
   assert.equal(ps.calls.filter((c) => c[0] === "suspendHistory").length, 0);
+});
+
+test("white_balance (patchMean) never asks for an exact integer ratio: 512 wide reads at 255", async () => {
+  const ps = withPixels(makeStub(), { r: 100, g: 110, b: 125 });
+  ps.other.width = 1000;
+  ps.other.height = 800;
+  ps.other.layers = [{ id: 20, name: "Background", kind: "pixel", isBackgroundLayer: true }];
+  await edit.white_balance(ps, { doc: 2, bbox: { left: 0, top: 0, right: 512, bottom: 300 } });
+  const first = ps.calls.find((c) => c[0] === "getPixels")[1];
+  assert.deepEqual(first.targetSize, { width: 255 });
+});
+
+// ---------- bug 1: redraw and RGB target after a mask write ----------
+
+// Records every write to layer.visible on the stub layer with id.
+function watchVisible(ps, id) {
+  const layer = ps.doc.layers.find((l) => l.id === id);
+  const writes = [];
+  let v = layer.visible;
+  Object.defineProperty(layer, "visible", {
+    get: () => v,
+    set: (x) => {
+      writes.push(x);
+      ps.calls.push(["visible", id, x]);
+      v = x;
+    },
+  });
+  return writes;
+}
+
+test("mask_from_polygon toggles visibility and selects RGB after putLayerMask (bug 1)", async () => {
+  const ps = makeStub();
+  const writes = watchVisible(ps, 11);
+  await edit.mask_from_polygon(ps, { layer: 11, points: [{ x: 5, y: 5 }, { x: 30, y: 5 }, { x: 30, y: 20 }], feather_px: 0 });
+  assert.deepEqual(writes, [false, true]);
+  assert.equal(ps.doc.layers.find((l) => l.id === 11).visible, true);
+  const putAt = ps.calls.findIndex((c) => c[0] === "putLayerMask");
+  const toggleAt = ps.calls.findIndex((c) => c[0] === "visible");
+  const rgbAt = ps.calls.findIndex((c) => c[0] === "batchPlay" && c[1].some((x) => x._obj === "select" && x._target[0]._ref === "channel"));
+  assert.ok(putAt < toggleAt && toggleAt < rgbAt, "put, then redraw, then RGB");
+  const rgb = ps.calls[rgbAt][1].map(strip);
+  assert.deepEqual(rgb, [{ _obj: "select", _target: [{ _ref: "channel", _enum: "channel", _value: "RGB" }], makeVisible: false }]);
+  assert.deepEqual(ps.calls.find((c) => c[0] === "resumeHistory"), ["resumeHistory", 7, true]);
+});
+
+test("a hidden layer stays hidden after the redraw toggle", async () => {
+  const ps = makeStub();
+  ps.doc.layers[1].visible = false;
+  const writes = watchVisible(ps, 11);
+  await edit.paint_mask(ps, { layer: 11, strokes: [{ points: [{ x: 5, y: 5 }], size_px: 4, hardness: 1, opacity: 1 }], color: "black" });
+  assert.deepEqual(writes, [true, false]);
+});
+
+test("add_adjustment deselects before make (bug 1)", async () => {
+  const ps = makeStub();
+  await edit.add_adjustment(ps, { type: "exposure", params: { exposure: 1 } });
+  const descs = allDescs(ps).map(strip);
+  assert.deepEqual(descs[0], d.deselect());
+  assert.equal(descs[1]._obj, "make");
 });

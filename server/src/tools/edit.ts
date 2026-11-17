@@ -113,7 +113,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
     {
       annotations: hints.add,
       description:
-        "Add an adjustment layer (one undoable history step) and return its layer_id. " +
+        "Add an adjustment layer (one undoable history step) and return its layer_id. Any active selection is cleared first, so the new layer gets an unmasked (all-white) mask. " +
         "Types and their params (all optional, default 0): " +
         "light: exposure (-5..5), contrast, highlights, shadows, whites, blacks (-100..100); " +
         "curves: points per channel {rgb|red|green|blue: [[x,y],...]} with x,y in 0..255; " +
@@ -206,10 +206,14 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
     "add_pixel_layer",
     {
       annotations: hints.add,
-      description: "Add an empty pixel layer with the given name (one undoable history step) and return its layer_id.",
+      description:
+        "Add an empty pixel layer with the given name (one undoable history step) and return its layer_id. It goes " +
+        "directly above the layer id given as above (inside that layer's group, if any; never clipped), else above " +
+        "the active layer.",
       inputSchema: {
         doc: z.number().int().optional().describe("Document id; defaults to the active document"),
         name: z.string().min(1).describe("Layer name"),
+        above: layerId.optional().describe("Layer id the new layer goes directly above; default: above the active layer"),
       },
     },
     forward(bridge, "add_pixel_layer"),
@@ -277,18 +281,24 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
     {
       annotations: hints.destroy,
       description:
-        "Delete one layer (adjustment, pixel, group with its contents, smart object) from doc (default the active document). " +
-        "Requires confirm: true, or the tool refuses and does nothing. The Background layer is never deleted (PROTECTED_LAYER). " +
-        "The active document is unchanged afterwards. One undoable history step; returns the deleted layer's id and name, " +
-        "and the updated layer tree in doc.",
+        "Delete layers (adjustment, pixel, text, group with its contents, smart object) from doc (default the active " +
+        "document). Give exactly one of layer (one id) or layers (1..100 ids, deleted together as ONE undoable history " +
+        "step; use this instead of several delete_layer calls). Requires confirm: true, or the tool refuses and does " +
+        "nothing. The Background layer is never deleted (PROTECTED_LAYER); if any listed id is missing or protected, " +
+        "nothing is deleted. The active document is unchanged afterwards. Returns deleted: {id, name} for layer, or " +
+        "deleted: [{id, name}] for layers, and the updated layer tree in doc.",
       inputSchema: {
         doc: docArg,
-        layer: layerId,
+        layer: layerId.optional(),
+        layers: z.array(layerId).min(1).max(100).optional().describe("Several layer ids, deleted in one step"),
         confirm: z.boolean().optional().describe("Must be true, or the tool refuses and does nothing"),
       },
     },
     async (args) => {
       if (args.confirm !== true) return toolError("Set confirm: true to delete_layer.");
+      if ((args.layer === undefined) === (args.layers === undefined)) {
+        return toolError("Give exactly one of layer or layers.");
+      }
       return forward(bridge, "delete_layer")(args);
     },
   );

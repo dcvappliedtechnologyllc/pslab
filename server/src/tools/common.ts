@@ -27,6 +27,8 @@ export const hints = {
   add: hint(false, false, false),
   /** Sets properties on an existing layer; same args give the same state. */
   set: hint(false, false, true),
+  /** Changes an existing layer relative to its current state; repeating it changes it again (move_layer dx/dy, transform_layer). */
+  edit: hint(false, false, false),
   /** Removes or crops document content (confirm-gated, still undoable). */
   destroy: hint(false, true, false),
   /** Writes or overwrites a file on disk (confirm-gated). */

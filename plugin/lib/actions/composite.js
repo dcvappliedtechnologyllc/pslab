@@ -4,9 +4,11 @@
 // Validation happens before runStep so a rejected call never creates a state.
 const D = require("../descriptors");
 const { runStep, runSteps, runRead, bp } = require("../step");
-const { findLayer, resolveDoc, hasUserMaskStrict } = require("../doc");
+const { findLayer, resolveDoc, normEdges: norm, hasUserMaskStrict } = require("../doc");
 const { clampBbox } = require("../stats");
 const defaultRecorded = require("../recorded/index");
+const { requireAnchor, placeAbove } = require("../place");
+const { applyParams } = require("./edit");
 
 // Test hook: replace the recorded-descriptor map (null restores the files).
 let recordedOverride = null;
@@ -26,17 +28,6 @@ const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 function validBbox(bbox) {
   return !!bbox && ["left", "top", "right", "bottom"].every((k) => isNum(bbox[k])) &&
     bbox.left < bbox.right && bbox.top < bbox.bottom;
-}
-
-// A bounds edge may be a number or a unit value ({_value} or {value}).
-function edge(v) {
-  if (v !== null && typeof v === "object") v = "_value" in v ? v._value : v.value;
-  return Number(v);
-}
-
-function norm(b) {
-  if (!b) return null;
-  return { left: edge(b.left), top: edge(b.top), right: edge(b.right), bottom: edge(b.bottom) };
 }
 
 const isEmpty = (b) =>
@@ -176,6 +167,8 @@ async function copy_to(ps, args = {}) {
   if (useSelection && !(src.selection && src.selection.bounds)) {
     throw codedError("NO_SELECTION", "use_selection is true but the source document has no active selection");
   }
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(dst, args.above);
 
   const original = ps.app.activeDocument;
   const srcDocName = String(src.name ?? src.title ?? `document ${src.id}`);
@@ -235,6 +228,8 @@ async function copy_to(ps, args = {}) {
       const dy = t.cy - (b.top + b.bottom) / 2;
       await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct: t.scale_pct, dx, dy })]);
       layer.name = args.name || defaultName;
+      // above: move it directly over the anchor, released from any clipping group
+      if (hasAbove) layer = await placeAbove(ps, dst, layer, args.above);
       const result = { layer_id: layer.id, bounds: norm(layer.bounds) };
 
       // src: drop the temp copy; dst stays active so the next layer tool
@@ -447,8 +442,82 @@ async function blur_layer(ps, args = {}) {
   });
 }
 
+// ---------- set_blur ----------
+
+const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const isGaussian = (fx) => isObj(fx) && isObj(fx.filter) && fx.filter._obj === "gaussianBlur";
+
+// Photoshop's 1-based filterFX _index of each Gaussian Blur in a smart
+// filter list (1 = the first applied, the bottom of the Smart Filters list).
+function gaussianIndexes(list) {
+  return (Array.isArray(list) ? list : []).flatMap((fx, i) => (isGaussian(fx) ? [i + 1] : []));
+}
+
+// The layer's smart filter list (a `get` of smartObject, else of filterFX), or
+// null when there is none. A read: runs outside any modal scope.
+async function readSmartFilters(ps, d, id) {
+  for (const prop of ["smartObject", "filterFX"]) {
+    let res;
+    try {
+      res = await ps.action.batchPlay(
+        [
+          {
+            _obj: "get",
+            _target: [{ _property: prop }, { _ref: "layer", _id: id }, { _ref: "document", _id: d.id }],
+            _options: { dialogOptions: "dontDisplay" },
+          },
+        ],
+        { synchronousExecution: true },
+      );
+    } catch {
+      continue;
+    }
+    const r = res && res[0];
+    if (!r || r._obj === "error") continue;
+    const list = prop === "smartObject" ? isObj(r.smartObject) && r.smartObject.filterFX : r.filterFX;
+    if (Array.isArray(list)) return list;
+  }
+  return null;
+}
+
+async function set_blur(ps, args = {}) {
+  const r = args.radius_px;
+  if (!isNum(r) || r < 0.1 || r > 250) throw invalidArgs("radius_px must be a number from 0.1 to 250");
+  const index = args.index;
+  if (index !== undefined && index !== null && !(Number.isInteger(index) && index >= 1)) {
+    throw invalidArgs("index must be a whole number from 1");
+  }
+  const { d } = resolveDoc(ps, args.doc);
+  const layer = requireLayer(d, args.layer);
+  const noFilter = () =>
+    codedError("NO_SMART_FILTER", `Layer ${layer.id} has no Gaussian Blur smart filter; use blur_layer to add one`);
+  if (String(layer.kind) !== "smartObject") throw noFilter();
+  const positions = gaussianIndexes(await readSmartFilters(ps, d, layer.id));
+  if (positions.length === 0) throw noFilter();
+  if (index !== undefined && index !== null && index > positions.length) {
+    throw invalidArgs(`index ${index}: layer ${layer.id} has ${positions.length} Gaussian Blur smart filter(s)`);
+  }
+  // which end of filterFX is the top of the Smart Filters list is unverified,
+  // so with several Gaussian Blurs the caller must pick one
+  const hasIndex = index !== undefined && index !== null;
+  if (!hasIndex && positions.length > 1) {
+    throw invalidArgs(
+      `layer ${layer.id} has ${positions.length} Gaussian Blur smart filters; give index (1 = the first applied, ` +
+        "counted from the bottom of the Smart Filters list)",
+    );
+  }
+  const at = hasIndex ? positions[index - 1] : positions[0];
+  const rec = recordedMap().edit_smart_filter;
+  if (!rec || rec.unsupported) throw codedError("NOT_SUPPORTED", "set_blur needs a recorded descriptor, and none is available");
+  const [desc] = applyParams(rec, { index: at, radius_px: r });
+  return stepIn(ps, `Claude: set_blur, ${r} px`, d, async () => {
+    await bp(ps, [D.selectLayerById(layer.id), desc]);
+    return { ok: true, layer_id: layer.id, radius_px: r, filter_index: at, gaussian_blurs: positions.length };
+  });
+}
+
 module.exports = {
-  select_object, copy_to, refine_edge, match_tone, blur_layer, setRecorded,
+  select_object, copy_to, refine_edge, match_tone, blur_layer, set_blur, setRecorded,
   // shared with workflow.js
   resolvePasted, allIds, activate, restore,
 };

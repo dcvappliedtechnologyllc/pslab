@@ -11,10 +11,12 @@ Runs on the pslab MCP tools. Photoshop must be open with the pslab plugin panel 
 - Non-destructive only: adjustment layers, masks, pasted pixel layers. Never edit Background.
 - Never crop, flatten, save or export unless asked. Do not call `crop` or `export` otherwise; if a crop was started or planned, cancel it and say so. `crop` is destructive: it discards the pixels outside the box.
 - Name every layer for what it does (Light 1, Glare fix, Object from reference) using the `name` argument.
-- Every coordinate is in image pixels. With `render_preview`, multiply preview coordinates by the returned `scale` (image px per preview px); never estimate from screen zoom.
+- Every coordinate is in image pixels. Read layer positions from `get_document`: every layer has `bounds` (without effects such as shadows), text layers have `text` (content, font, size_pt, color). Use `render_preview` only to see; multiply its preview coordinates by the returned `scale`, never estimate from screen zoom.
+- `get_document` `modal` not null (a crop, transform or text edit is open in Photoshop): every other tool answers MODAL_BUSY. Ask the user to finish or cancel it, then retry.
 - Each tool call is one undo step. After a change, `render_preview` to check it.
-- There is no undo tool. To back out a step, hide the layer with `set_layer layer:<id> visible:false`, or remove it with `delete_layer layer:<id> confirm:true` (never the Background; it refuses). To change an adjustment's values, use `set_adjustment` on the layer instead of stacking another one. For anything else ask the user to undo in Photoshop (Edit > Undo or the History panel).
-- Pass `doc` to every layer tool (`add_adjustment`, `set_adjustment`, `white_balance`, `mask_from_polygon`, `mask_from_subject`, `mask_from_luminance`, `paint_mask`, `set_layer`, `delete_layer`, `refine_edge`, `match_tone`, `blur_layer`, `straighten`, `content_aware_fill`, `clone_from`, `compare_preview`) whenever more than one document is open; after `copy_to` that is the destination doc id.
+- Place every new layer where it belongs with `above:<layer id>` (add_adjustment, add_pixel_layer, copy_to, clone_from, content_aware_fill, stamp_visible, add_shape). Fix the stack with `reorder_layer` (`above`, `below` or `to:"top"|"bottom"`); never delete and rebuild layers to change their order.
+- There is no undo tool. To back out a step, hide the layer with `set_layer layer:<id> visible:false`, or remove it with `delete_layer layer:<id> confirm:true` (several: `layers:[ids]`, one step; never the Background, it refuses). To change an adjustment's values, use `set_adjustment` on the layer instead of stacking another one. For anything else ask the user to undo in Photoshop (Edit > Undo or the History panel).
+- Pass `doc` to every layer tool whenever more than one document is open; after `copy_to` that is the destination doc id.
 - Check your own work with `compare_preview layer_ids_off:[<ids>]` (before on the left, after on the right; it leaves no history state), not by asking the user to look.
 
 ## 0. Connect
@@ -32,7 +34,7 @@ Runs on the pslab MCP tools. Photoshop must be open with the pslab plugin panel 
 - `straighten auto:true` measures the tilt of the near-vertical lines and rotates a "Straightened" smart-object copy of the Background above it (the Background is never changed); report the measured angle and confidence. Pass `angle_deg` (positive = clockwise, -45..45) instead when the measurement looks wrong; `vertical:false` uses the horizontals (a counter edge) instead.
 - The rotation exposes the Background in the corners. Do not crop to hide them unless the user asks (crop is destructive); say in the report that the corners need a crop, and if they ask, `crop ratio:"4:5" focus:{x,y} confirm:true` keeps the subject centred.
 
-## 2. Lighting (one Light layer, top of stack, unclipped)
+## 2. Lighting (one Light layer, above the photo and patches, below any text or shapes, unclipped)
 Call `add_adjustment type:"light" name:"Light 1" params:{...}` using:
 
 | Source | exposure | contrast | highlights | shadows |
@@ -49,6 +51,10 @@ A Light layer reports `kind:"light"` in `get_document` (legacy Brightness/Contra
 
 `light` may come back as a group (holding Exposure and Curves layers) when no recorded descriptor is available; the returned `layer_id` is then the group's id, and use that id for masks and `set_layer`. That fallback ignores `whites` and `blacks`.
 
+## 2b. Named looks (when the user asks for one)
+- **Dreamy:** Light exposure +0.55, contrast +10, highlights -55, shadows +35, blacks -8; `clarity_dehaze` clarity -20; `color_vibrance` vibrance +22, saturation +6; then a glow: `stamp_visible name:"Glow"`, `blur_layer` on it, `set_layer blend:"soft_light" opacity:32` (tune the radius with `set_blur`, not a second blur). Never lift blacks and never use a Screen glow for dreamy (rejected as "too much blur fade" and "too washed out"); keep contrast positive and get the softness from negative clarity plus the Soft Light glow.
+- **Warm and luxurious** (bright source): `curves` rgb `[[0,0],[60,66],[128,162],[195,227],[255,255]]`, red `[[0,0],[128,133],[255,255]]`, blue `[[0,0],[128,121],[255,250]]`; `color_vibrance` vibrance +14, saturation +4; vignette: `add_adjustment type:"light" name:"Vignette" params:{exposure:-0.2}` with `mask_gradient kind:"radial" from:<centre> radius_px:<half the long edge> invert:true`. Stronger settings (rgb mid 130, red 136, blue 118, vignette -0.55) read too dark and yellow.
+
 ## 3. Glare on glossy dark surfaces
 1. `add_adjustment type:"light" name:"Glare fix" params:{exposure:-1.0, highlights:-60}`.
 2. Make its mask black: Photoshop adds a white mask to a new adjustment layer by default, so call `set_layer layer:<id> mask_invert:true`. Only if `get_document` shows the layer without a mask (`hasMask:false`), make a black one instead with `mask_from_polygon` on that layer: the four canvas corners (0,0), (width,0), (width,height), (0,height) from `get_document`, `feather_px:0`, `invert:true`.
@@ -61,18 +67,25 @@ A Light layer reports `kind:"light"` in `get_document` (legacy Brightness/Contra
 - These two can return NOT_SUPPORTED; if so, say so in the report and skip them (or approximate with `curves` / `hue_sat` if the user wants).
 
 ## 5a. Remove or patch something (no reference shot)
-- Remove a cable, outlet, smudge or small object: `content_aware_fill bbox:{...} name:"Remove cable"` (or `polygon:[{x,y},...]`, drawn a little larger than the object). The patch lands on a new layer on top of the stack; the Background is untouched. Check with `compare_preview layer_ids_off:[<patch id>]`; if the fill smears, `delete_layer` it and try a tighter or larger region.
-- Cover something with another part of the same surface (a clean stretch of the same wall, floor or counter): `clone_from src_bbox:{...} dst:{x,y} name:"Patch wall" feather_px:12`; `dst` is where the copy's top-left corner lands and `feather_px` fades its edge (keep it under half the box's shorter side). Choose a source lit the same way.
-- Do these before the lighting layers so one look covers the patch, or add the patch below them with `above`.
+- Remove a cable, outlet, ceiling light or small object: `content_aware_fill bbox:{...} name:"Remove cable" above:<Background id> sample:"below"` (or `polygon:[{x,y},...]`, drawn a little larger than the object). `sample:"below"` keeps text and lighting out of the patch, and `above` puts it under them, so later lighting changes light it like the rest. Check with `compare_preview layer_ids_off:[<patch id>]`; if the fill smears, `delete_layer` it and try a tighter or larger region.
+- Cover something with another part of the same surface (a clean stretch of the same wall, floor or counter): `clone_from src_bbox:{...} dst:{x,y} name:"Patch wall" feather_px:12 above:<Background id>`; `dst` is where the copy's top-left corner lands and `feather_px` fades its edge (keep it under half the box's shorter side). Choose a source lit the same way; it copies everything visible, so hide text over the source first.
 
 ## 5. Replace a missing or broken object from a reference shot
 1. In the reference doc, `select_object` (`doc` = reference, `bbox` around the object, `mode:"object"`). Select the object alone if it stands free; select the group if objects overlap. `mode:"subject"` picks the main subject of the whole image and ignores `bbox` (the same holds for `mask_from_subject`).
-2. Scale from a shared reference object in both frames (e.g. a door handle or a picture frame): `scale_pct` = 100 x ref height in target / ref height in source. Measure heights from `render_preview` with `scale`.
-3. `copy_to` with `src_doc`, `use_selection:true`, `dst_doc`, `transform:{scale_pct, cx, cy}`, `name:"Object from reference"`. The profile is converted to the target's space automatically, and `dst_doc` is left active. From here on pass `doc:<dst_doc>` to every layer tool.
-4. Seat the base on the surface line (choose `cx, cy` so it does); cover any remaining original fully. If the placement is off, hide the layer (`set_layer visible:false`) or ask the user to undo, then call `copy_to` again.
+2. Scale from a shared reference object in both frames (e.g. a door handle or a picture frame): `scale_pct` = 100 x ref height in target / ref height in source. Measure heights from `get_document` bounds or `render_preview` with `scale`.
+3. `copy_to` with `src_doc`, `use_selection:true`, `dst_doc`, `transform:{scale_pct, cx, cy}`, `name:"Object from reference"`, `above:<Background or patch id>` (under the lighting). The profile is converted to the target's space automatically, and `dst_doc` is left active. From here on pass `doc:<dst_doc>` to every layer tool.
+4. Seat the base on the surface line (choose `cx, cy` so it does); cover any remaining original fully. If the placement is off, `move_layer layers:[<id>] dx dy`; if the size is off, one `transform_layer scale_pct` (pixel layers soften with every transform, so prefer one corrected call over several).
 5. Clean edges: `refine_edge doc:<dst> layer:<new> contract_px:2 feather_px:1 decontaminate:true`; then `paint_mask doc:<dst> color:"black"` over any background wedge left between parts.
 6. Match: `blur_layer doc:<dst> radius_px:0.5` for phone shots (use the `layer_id` it returns afterwards; it can change); then call `match_tone doc:<dst> layer:<new> reference_bbox:<neighbor region>` once. It measures both areas and computes its own Hue/Saturation (hue is always 0) and Curves values, clipped to the layer; report the values it returns. To soften it, lower those layers' opacity with `set_layer` rather than calling it again.
-7. Add lighting layers above the composite (`add_adjustment doc:<dst> ... above:<composite layer>` or on top of the stack) so one look covers both.
+7. Lighting layers go above the composite so one look covers both.
+
+## 5c. Titles, bars and shadows
+- Order of work: cleanup patches, then lighting, then text and shapes, then shadows. Lighting layers stay under the text so white type stays white (`reorder_layer` if they are not).
+- Before placing a title, check its zone for ceiling lights and other bright spots (`render_preview` of the zone, `region_stats` `clipped_high_pct`); place around them or offer to remove them with 5a.
+- Text comes from another document with `copy_to ... above:<top lighting layer>`. Bars and lines: `add_shape kind:"rect" bbox:{...} color:{r,g,b} name:"Bar left" above:<title id>` (`kind:"line"` with `from`, `to`, `thickness_px`). Never draw shapes with an adjustment layer and a mask.
+- Position: `move_layer layers:[title, bars] dy:100` (moves them as one block) or `x`/`y` for an absolute top-left. Size: `transform_layer layer:<id> scale_pct:76 cx cy`. Centre: `align_layers layers:[title, bars] horizontal:"center" as_group:true`.
+- Text over a pale ceiling loses contrast every time the photo is brightened: offer a shadow as soon as the text is placed. `add_layer_style layer:<id> style:"drop_shadow" params:{opacity, distance_px, size_px}` on each text and bar layer; tune with `set_layer_style` (only the changed params), remove with `clear_layer_style`. Never fake a shadow with a copy, blur and Levels.
+- Instagram 9:16: flag any title whose `bounds.top` is within the top 12% of the height (it sits under the app's header).
 
 ## 6. Instagram export (only when asked)
 - Prefer the preset: `export shoot:<source folder name> filename:"01_living-room.jpg" preset:"post" quality:10 confirm:true` gives a 1080 x 1350 sRGB JPG (4:5, quality 10 of 12 is about 85%); `preset:"story"` gives 1080 x 1920 (9:16). The ratio crop happens on a temporary copy, so the open document keeps its full frame; add `focus:{x,y}` (image px) to centre the crop on the subject instead of the frame centre. Files land in `~/Documents/pslab-exports/<shoot>/<filename>` (the `PSLAB_EXPORT_ROOT` environment variable overrides the root); tell the user the full path and the `crop_bbox` it used.
@@ -87,10 +100,10 @@ A Light layer reports `kind:"light"` in `get_document` (legacy Brightness/Contra
 
 ## 7. When a tool for the job does not exist
 
-Trigger: the user asks for an edit no pslab tool covers (perspective or lens correction, drop shadow,
-layer styles, text, a filter, anything not in the tool list), or a tool returns `NOT_SUPPORTED`.
-Straightening (`straighten`), content-aware fill (`content_aware_fill`) and clone patches
-(`clone_from`) are covered now: use the tools, not the screen.
+Trigger: the user asks for an edit no pslab tool covers (perspective or lens correction, creating or
+editing text, a stroke or glow layer style, a filter, anything not in the tool list), or a tool returns
+`NOT_SUPPORTED`. Covered now, so use the tools, not the screen: straightening, content-aware fill, clone
+patches, moving, stacking, scaling and aligning layers, shapes, drop shadows, stamp visible, blur radius.
 
 Do both of these, in this order, every time:
 

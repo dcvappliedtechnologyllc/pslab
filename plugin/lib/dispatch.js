@@ -26,10 +26,36 @@ function summaryTarget(ps, args) {
   }
 }
 
+// Errors a Photoshop modal state (a crop, Free Transform, text editing, a
+// dialog) can masquerade as: the layer tree shows "Crop Preview", ids vanish,
+// batchPlay or the modal scope fails. MODAL_BUSY is not here: it already
+// carries the kind, so it passes through without a second probe.
+const MODAL_SUSPECT = new Set(["NO_LAYER", "NO_DOCUMENT", "BATCHPLAY", "MODAL_FAILED", "STEP_FAILED"]);
+
 // Returns (frame) => Promise<response frame>. The promise never rejects.
 // opts.docSummary(ps, doc) builds the summary sent with every ok response;
-// opts.onError(message) hears about a summary that could not be built.
-function createDispatcher(ps, actions, { docSummary, onError = () => {} } = {}) {
+// opts.onError(message) hears about a summary that could not be built;
+// opts.modalState(ps, doc) (optional) is probed once after a MODAL_SUSPECT
+// error and, when Photoshop is modal, turns the error into MODAL_BUSY.
+function createDispatcher(ps, actions, { docSummary, onError = () => {}, modalState = null } = {}) {
+  async function failure(frame, e) {
+    const code = (e && e.code) || "PLUGIN_ERROR";
+    if (modalState && MODAL_SUSPECT.has(code)) {
+      let kind = null;
+      try {
+        kind = await modalState(ps, summaryTarget(ps, frame.args));
+      } catch {}
+      if (kind) {
+        return errorFrame(
+          frame.id,
+          "MODAL_BUSY",
+          `Photoshop is in a modal state (${kind}); commit or cancel it, then retry (was ${code}: ${text(e)})`,
+        );
+      }
+    }
+    return errorFrame(frame.id, code, text(e));
+  }
+
   async function run(frame) {
     const fn = Object.prototype.hasOwnProperty.call(actions, frame.action) ? actions[frame.action] : null;
     if (!fn) return errorFrame(frame.id, "UNKNOWN_ACTION", `Unknown action: ${frame.action}`);
@@ -37,7 +63,7 @@ function createDispatcher(ps, actions, { docSummary, onError = () => {} } = {}) 
     try {
       result = await fn(ps, frame.args || {});
     } catch (e) {
-      return errorFrame(frame.id, (e && e.code) || "PLUGIN_ERROR", text(e));
+      return failure(frame, e);
     }
     let doc = null;
     try {

@@ -83,3 +83,46 @@ test("round1 rounds to 0.1 without -0", () => {
   assert.ok(!Object.is(round1(-0.04), -0));
   assert.equal(round1(2.04), 2);
 });
+
+const { coversCanvas, polygonCoversCanvas } = require("../lib/geometry");
+
+test("coversCanvas: the box reaches every canvas edge (optionally after a margin)", () => {
+  assert.equal(coversCanvas({ left: 0, top: 0, right: 600, bottom: 400 }, 600, 400), true);
+  assert.equal(coversCanvas({ left: -5, top: -5, right: 700, bottom: 500 }, 600, 400), true);
+  assert.equal(coversCanvas({ left: 1, top: 0, right: 600, bottom: 400 }, 600, 400), false);
+  assert.equal(coversCanvas({ left: 0, top: 0, right: 599, bottom: 400 }, 600, 400), false);
+  assert.equal(coversCanvas({ left: 0, top: 0, right: 600, bottom: 399 }, 600, 400), false);
+  assert.equal(coversCanvas({ left: 2, top: 2, right: 598, bottom: 398 }, 600, 400, 2), true);
+  assert.equal(coversCanvas({ left: 3, top: 2, right: 598, bottom: 398 }, 600, 400, 2), false);
+  assert.equal(coversCanvas(null, 600, 400), false);
+});
+
+test("polygonCoversCanvas: true only when the (grown) polygon spans the canvas and fills 99.5% of it", () => {
+  const rect = [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 400 }, { x: 0, y: 400 }];
+  assert.equal(polygonCoversCanvas(rect, 600, 400), true);
+  const inset = [{ x: 2, y: 2 }, { x: 598, y: 2 }, { x: 598, y: 398 }, { x: 2, y: 398 }];
+  assert.equal(polygonCoversCanvas(inset, 600, 400, 0), false);
+  assert.equal(polygonCoversCanvas(inset, 600, 400, 3), true);
+  const tri = [{ x: 0, y: 0 }, { x: 600, y: 0 }, { x: 0, y: 400 }];
+  assert.equal(polygonCoversCanvas(tri, 600, 400, 2), false);
+  const big = [{ x: -100, y: -100 }, { x: 800, y: -100 }, { x: 800, y: 600 }, { x: -100, y: 600 }];
+  assert.equal(polygonCoversCanvas(big, 600, 400), true);
+});
+
+test("polygonCoversCanvas: a C-shape with all four corners inside does not cover", () => {
+  const c = [
+    { x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 150 }, { x: 300, y: 150 },
+    { x: 300, y: 250 }, { x: 600, y: 250 }, { x: 600, y: 400 }, { x: 0, y: 400 },
+  ];
+  assert.equal(polygonCoversCanvas(c, 600, 400), false);
+  assert.equal(polygonCoversCanvas(c, 600, 400, 2), false);
+  // a hairline notch closes under the apron: still covers
+  const hair = [
+    { x: 0, y: 0 }, { x: 600, y: 0 }, { x: 600, y: 199 }, { x: 590, y: 199 },
+    { x: 590, y: 201 }, { x: 600, y: 201 }, { x: 600, y: 400 }, { x: 0, y: 400 },
+  ];
+  assert.equal(polygonCoversCanvas(hair, 600, 400, 2), true);
+  // clockwise or counter-clockwise order gives the same answer
+  const rectCcw = [{ x: 0, y: 0 }, { x: 0, y: 400 }, { x: 600, y: 400 }, { x: 600, y: 0 }];
+  assert.equal(polygonCoversCanvas(rectCcw, 600, 400), true);
+});

@@ -1,12 +1,17 @@
 // Read-only actions.
-const { docSummary, resolveDoc } = require("../doc");
+const { docSummary, resolveDoc, modalState } = require("../doc");
+const { modalHint } = require("./dev");
 const { runRead } = require("../step");
 const { regionStats, clampBbox } = require("../stats");
+const { previewRequest, safeTargetWidth, reconcileBounds } = require("../preview");
 
 async function get_document(ps, args = {}) {
   const { d, docs } = resolveDoc(ps, args.doc);
+  // Probed before the tree is read: during a crop the tree shows "Crop Preview".
+  const modal = await modalState(ps, d, modalHint());
   return {
-    ...(await docSummary(ps, d)),
+    ...(await docSummary(ps, d, { detail: true })),
+    modal,
     open_docs: docs.map((x) => ({ id: x.id, name: x.name })),
   };
 }
@@ -17,13 +22,25 @@ function unsupported(message) {
   return e;
 }
 
-// Composite (or one layer) pixels for a clamped box; caller disposes imageData.
-async function readPixels(ps, d, box, targetSize, layer) {
+// Composite (or one layer) pixels for a clamped box, with the sourceBounds
+// and pyramid level getPixels reports; caller disposes imageData.
+async function readRegion(ps, d, box, targetSize, layer) {
   const opts = { documentID: d.id, sourceBounds: box, componentSize: 8, applyAlpha: true };
   if (layer !== undefined && layer !== null) opts.layerID = layer;
   if (targetSize) opts.targetSize = targetSize;
-  const { imageData } = await ps.imaging.getPixels(opts);
-  return imageData;
+  const { imageData, sourceBounds, level } = await ps.imaging.getPixels(opts);
+  return { imageData, sourceBounds, level };
+}
+
+async function readPixels(ps, d, box, targetSize, layer) {
+  return (await readRegion(ps, d, box, targetSize, layer)).imageData;
+}
+
+const boxText = (b) => `{left ${b.left}, top ${b.top}, right ${b.right}, bottom ${b.bottom}}`;
+
+function mismatchWarning(requested, got, level) {
+  return `Photoshop returned pixels for ${boxText(got)} instead of the requested ${boxText(requested)}` +
+    `${level !== undefined ? ` (level ${level})` : ""}; region and scale describe what was returned`;
 }
 
 async function render_preview(ps, args = {}) {
@@ -32,20 +49,22 @@ async function render_preview(ps, args = {}) {
   const w = Number(d.width);
   const h = Number(d.height);
   const region = clampBbox(args.region ?? { left: 0, top: 0, right: w, bottom: h }, w, h);
-  const rw = region.right - region.left;
-  const rh = region.bottom - region.top;
-  let targetSize = null;
-  if (Math.max(rw, rh) > maxPx) targetSize = rw >= rh ? { width: maxPx } : { height: maxPx };
+  // never an exact integer downscale ratio (bug 9: those reads came back offset)
+  const req = previewRequest(region, maxPx);
   return runRead(ps, "Render Preview", async () => {
-    const imageData = await readPixels(ps, d, region, targetSize);
+    const got = await readRegion(ps, d, req.sourceBounds, req.targetSize);
+    const imageData = got.imageData;
     try {
+      const { region: used, mismatch } = reconcileBounds(region, got.sourceBounds, got.level);
       const jpeg_base64 = await ps.imaging.encodeImageData({ imageData, base64: true });
-      return {
+      const out = {
         jpeg_base64,
         preview: { w: imageData.width, h: imageData.height },
-        region,
-        scale: rw / imageData.width,
+        region: used,
+        scale: (used.right - used.left) / imageData.width,
       };
+      if (mismatch) out.warning = mismatchWarning(region, used, got.level);
+      return out;
     } finally {
       imageData.dispose();
     }
@@ -55,19 +74,26 @@ async function render_preview(ps, args = {}) {
 async function region_stats(ps, args = {}) {
   const { d } = resolveDoc(ps, args.doc);
   const bbox = clampBbox(args.bbox, Number(d.width), Number(d.height));
-  const bw = bbox.right - bbox.left;
-  const targetSize = bw > 512 ? { width: 512 } : null;
+  const tw = safeTargetWidth(bbox.right - bbox.left, 512);
+  const targetSize = tw === null ? null : { width: tw };
   const layer = args.layer ?? undefined;
   return runRead(ps, "Region Stats", async () => {
-    const imageData = await readPixels(ps, d, bbox, targetSize, layer);
+    const got = await readRegion(ps, d, bbox, targetSize, layer);
+    const imageData = got.imageData;
     try {
       if (imageData.components !== 3) {
         throw unsupported(`Expected 3 RGB components, got ${imageData.components}`);
       }
       const data = await imageData.getData({ chunky: true });
       const stats = regionStats(data, imageData.width, imageData.height);
-      const out = { ...stats, bbox };
+      // a layer read reports sourceBounds clipped to the layer, not a shifted
+      // read, so only composite reads are reconciled
+      const { region: used, mismatch } = layer === undefined
+        ? reconcileBounds(bbox, got.sourceBounds, got.level)
+        : { region: bbox, mismatch: false };
+      const out = { ...stats, bbox: used };
       if (layer !== undefined) out.layer = layer;
+      if (mismatch) out.warning = mismatchWarning(bbox, used, got.level);
       return out;
     } finally {
       imageData.dispose();
@@ -110,4 +136,4 @@ async function open_document(ps, args = {}) {
   };
 }
 
-module.exports = { get_document, open_document, render_preview, region_stats, openEntry, readPixels };
+module.exports = { get_document, open_document, render_preview, region_stats, openEntry, readPixels, readRegion };

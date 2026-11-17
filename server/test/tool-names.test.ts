@@ -12,6 +12,8 @@ import { registerOutputTools } from "../src/tools/output.js";
 import { registerGeometryTools } from "../src/tools/geometry.js";
 import { registerWorkflowTools } from "../src/tools/workflow.js";
 import { registerMaskTools } from "../src/tools/masks.js";
+import { registerLayerTools } from "../src/tools/layers.js";
+import { registerDesignTools } from "../src/tools/design.js";
 
 const require = createRequire(import.meta.url);
 const pluginActions = require("../../plugin/lib/actions/index.js") as Record<string, unknown>;
@@ -28,6 +30,8 @@ describe("tool names", () => {
     registerGeometryTools(server, bridge);
     registerWorkflowTools(server, bridge);
     registerMaskTools(server, bridge);
+    registerLayerTools(server, bridge);
+    registerDesignTools(server, bridge);
     const [a, b] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "t", version: "0" });
     await Promise.all([server.connect(a), client.connect(b)]);
@@ -46,6 +50,9 @@ describe("tool names", () => {
       }
       const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name).sort();
       expect(destructive).toEqual(["crop", "delete_layer", "export", "save", "save_psd"]);
+      // new in v0.3: stamp_visible adds a layer (not idempotent, not destructive)
+      const stamp = tools.find((t) => t.name === "stamp_visible")!;
+      expect(stamp.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: false });
     } finally {
       await client.close();
     }
@@ -79,6 +86,8 @@ describe("tool schemas", () => {
     registerGeometryTools(server, bridge);
     registerWorkflowTools(server, bridge);
     registerMaskTools(server, bridge);
+    registerLayerTools(server, bridge);
+    registerDesignTools(server, bridge);
     const [a, b] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "t", version: "0" });
     await Promise.all([server.connect(a), client.connect(b)]);

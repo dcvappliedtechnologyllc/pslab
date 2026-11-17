@@ -11,6 +11,7 @@ type PreviewResult = {
   preview: { w: number; h: number };
   region: { left: number; top: number; right: number; bottom: number };
   scale: number;
+  warning?: string;
 };
 
 export function registerSeeTools(server: McpServer, bridge: PluginBridge): void {
@@ -20,7 +21,14 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
       annotations: hints.read,
       description:
         "Document summary (size, ppi, profile, bits, layer tree with ids) in doc, plus the list of open documents in " +
-        "result.open_docs. Pass doc to target a document other than the active one. All coordinates everywhere are image pixels.",
+        "result.open_docs. Each layer has bounds {left, top, right, bottom} (pixels, without effects such as a drop " +
+        "shadow; null for an empty layer or an adjustment without a mask) and maskEnabled (null when the layer has no " +
+        "mask; false means the mask exists but is switched off, so the layer acts unmasked). Text layers also carry " +
+        "text {content, font, style, size_pt, color {r,g,b}, justification}. doc.modal is null normally; while " +
+        'Photoshop is modal it names what holds it ("crop", "transform", "text", "dialog", "busy" for another ' +
+        'plugin, or "unknown"). A non-null modal means the layer tree may show "Crop Preview" and a provisional ' +
+        "width, and every other tool answers MODAL_BUSY: ask the user to finish or cancel it in Photoshop first. Pass doc to target a document other than " +
+        "the active one. All coordinates everywhere are image pixels.",
       inputSchema: { doc: z.number().int().optional().describe("Document id; defaults to the active document") },
     },
     async (args) => {
@@ -42,7 +50,7 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
     {
       annotations: hints.read,
       description:
-        "Downscaled JPEG preview of the document (or a region). Returns scale = image pixels per preview pixel; multiply preview coordinates by scale to get image pixels. Default long edge 1500 px; request a region at full resolution only for edge work.",
+        "Downscaled JPEG preview of the document (or a region). Returns scale = image pixels per preview pixel and the region the pixels came from; image x = region.left + preview x * scale (same for y with region.top). The long edge can be one pixel under max_px (exact integer downscales are avoided). If a warning is present, Photoshop returned a different area than asked and region/scale describe what was returned. Default long edge 1500 px; request a region at full resolution only for edge work.",
       inputSchema: {
         doc: z.number().int().optional().describe("Document id; defaults to the active document"),
         region: box.optional().describe("Region in image pixels; defaults to the whole canvas"),
@@ -58,7 +66,13 @@ export function registerSeeTools(server: McpServer, bridge: PluginBridge): void 
             { type: "image" as const, data: r.jpeg_base64, mimeType: "image/jpeg" },
             {
               type: "text" as const,
-              text: JSON.stringify({ scale: r.scale, preview: r.preview, region: r.region, doc }),
+              text: JSON.stringify({
+                scale: r.scale,
+                preview: r.preview,
+                region: r.region,
+                ...(r.warning ? { warning: r.warning } : {}),
+                doc,
+              }),
             },
           ],
         };

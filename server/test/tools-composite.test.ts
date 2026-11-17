@@ -41,7 +41,7 @@ describe("composite tools over MCP", () => {
 
   it("lists select_object and copy_to with descriptions", async () => {
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["blur_layer", "copy_to", "match_tone", "refine_edge", "select_object"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["blur_layer", "copy_to", "match_tone", "refine_edge", "select_object", "set_blur"]);
     const copy = tools.find((t) => t.name === "copy_to")!;
     expect(copy.description).toContain("cx, cy");
     expect(copy.description).toContain("profile");
@@ -81,6 +81,14 @@ describe("composite tools over MCP", () => {
     expect(JSON.parse(textOf(res))).toEqual({ result: { layer_id: 42 }, doc: null });
   });
 
+  it("copy_to forwards above and describes it", async () => {
+    const transform = { scale_pct: 76, cx: 1225, cy: 600 };
+    await client.callTool({ name: "copy_to", arguments: { src_doc: 1, dst_doc: 2, transform, above: 9 } });
+    expect(seen).toEqual([{ action: "copy_to", args: { src_doc: 1, use_selection: true, dst_doc: 2, transform, above: 9 } }]);
+    const { tools } = await client.listTools();
+    expect(tools.find((t) => t.name === "copy_to")!.description).toContain("directly above");
+  });
+
   it("select_object forwards args and rejects an unknown mode", async () => {
     const bbox = { left: 1, top: 2, right: 30, bottom: 40 };
     await client.callTool({ name: "select_object", arguments: { doc: 3, bbox, mode: "subject" } });
@@ -113,6 +121,30 @@ describe("composite tools over MCP", () => {
       expect(res.isError).toBe(true);
     }
     expect(seen).toEqual([]);
+  });
+
+  it("set_blur forwards radius_px and index, is a set tool, and rejects bad values in the schema", async () => {
+    let res = await client.callTool({ name: "set_blur", arguments: { doc: 2, layer: 5, radius_px: 4 } });
+    expect(res.isError).toBeFalsy();
+    res = await client.callTool({ name: "set_blur", arguments: { layer: 5, radius_px: 2.5, index: 2 } });
+    expect(res.isError).toBeFalsy();
+    expect(seen).toEqual([
+      { action: "set_blur", args: { doc: 2, layer: 5, radius_px: 4 } },
+      { action: "set_blur", args: { layer: 5, radius_px: 2.5, index: 2 } },
+    ]);
+    seen = [];
+    for (const extra of [{ radius_px: 0 }, { radius_px: 251 }, { radius_px: 2, index: 0 }, { radius_px: 2, index: 1.5 }]) {
+      const bad = await client.callTool({ name: "set_blur", arguments: { layer: 5, ...extra } });
+      expect(bad.isError, JSON.stringify(extra)).toBe(true);
+    }
+    expect(seen).toEqual([]);
+    const { tools } = await client.listTools();
+    const t = tools.find((x) => x.name === "set_blur")!;
+    expect(t.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false });
+    expect(t.description).toContain("NO_SMART_FILTER");
+    expect(t.description).toContain("blur_layer");
+    expect(t.description).toContain("counted from the bottom");
+    expect(t.description).toContain("required when the layer has more than one");
   });
 
   it("refine_edge rejects a negative contract without calling the plugin", async () => {

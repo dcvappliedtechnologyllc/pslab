@@ -31,15 +31,16 @@ The plugin manifest asks for `localFileSystem: "fullAccess"` because `export` wr
 
 ## Tools
 
-All coordinates are image pixels. `doc` is a document id from `get_document`; omitted, the active document is used.
+45 tools, grouped as in `server/src/tools/`. All coordinates are image pixels. `doc` is a document id from `get_document`; omitted, the active document is used. Tools that create a layer take `above` (a layer id) to place it directly above that layer.
+
+Every tool declares MCP hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), so Claude Desktop and Claude Code can ask before a destructive call. Only `crop`, `delete_layer`, `export`, `save` and `save_psd` are marked destructive; `move_layer` and `transform_layer` are marked not idempotent (repeating them moves or scales again).
 
 ### See
 
 | Tool | Purpose |
 | --- | --- |
-| `get_document` | Document summary (size, ppi, profile, layer tree with ids) and the list of open documents |
+| `get_document` | Document summary (size, ppi, profile, layer tree with ids, per-layer `bounds` and `maskEnabled`, `text` on text layers, `modal` while Photoshop is in a crop, transform or text edit) and the list of open documents |
 | `open_document` | Open an image file from an absolute path as a new document |
-
 | `render_preview` | Downscaled JPEG of the document or a region; returns `scale` (image px per preview px) |
 | `region_stats` | Mean RGB and luminance, histogram and clipped-pixel percentages for a box |
 
@@ -52,12 +53,12 @@ Note: a Light adjustment layer reports kind `light` (pslab reads Photoshop's bri
 | `add_adjustment` | Add an adjustment layer: `light`, `curves`, `hue_sat`, `exposure`, `brightness_contrast`, `color_vibrance`, `clarity_dehaze`, `levels` (per-channel black/white/gamma) |
 | `set_adjustment` | Change an existing adjustment layer's values in place (same types and params as `add_adjustment`) |
 | `white_balance` | Neutralise a colour cast from a grey/white patch with a per-channel Levels layer placed directly above the Background; `keep_warmth` keeps part of the red-blue gap; returns before/after means |
-| `add_pixel_layer` | Add an empty named pixel layer |
+| `add_pixel_layer` | Add an empty named pixel layer, optionally `above` a given layer |
 | `mask_from_polygon` | Replace a layer's mask with a feathered polygon (optionally inverted) |
 | `mask_from_subject` | Add a mask from Select Subject or Object Selection inside a box |
 | `paint_mask` | Paint white or black brush strokes onto a layer's mask |
 | `set_layer` | Change opacity, blend mode, visibility, name, or invert the mask |
-| `delete_layer` | Delete one layer; needs `confirm: true`; never deletes the Background layer |
+| `delete_layer` | Delete one layer, or several with `layers` in one undo step; needs `confirm: true`; never deletes the Background layer |
 
 ### Masks
 
@@ -73,18 +74,39 @@ Note: a Light adjustment layer reports kind `light` (pslab reads Photoshop's bri
 | Tool | Purpose |
 | --- | --- |
 | `select_object` | Select an object (or the main subject) in a document |
-| `copy_to` | Copy the selection or a layer into another document, scaled and positioned |
+| `copy_to` | Copy the selection or a layer into another document, scaled, positioned and optionally placed `above` a layer |
 | `refine_edge` | Build a contracted, feathered mask from a layer's transparency |
 | `match_tone` | Match a pasted layer's tone to a reference region with clipped Hue/Sat and Curves |
 | `blur_layer` | Gaussian blur as a smart filter |
+| `set_blur` | Change the radius of an existing Gaussian Blur smart filter in place |
 
 ### Geometry and cleanup
 
 | Tool | Purpose |
 | --- | --- |
 | `straighten` | Rotate a "Straightened" smart-object copy of the Background by `angle_deg` (positive = clockwise) or by the tilt `auto` measures from straight edges; the Background is untouched. Refuses (ALREADY_STRAIGHTENED) when a "Straightened" layer exists: `delete_layer` it (confirm) or hide it first. Patch layers above it are not rotated, so straighten first, then clean up |
-| `content_aware_fill` | Remove something with Content-Aware Fill into a box or polygon; the patch lands on a new named layer |
+| `content_aware_fill` | Remove something with Content-Aware Fill into a box or polygon; the patch lands on a new named layer; `sample: "below"` keeps text and lighting above it out of the patch |
 | `clone_from` | Copy a box of the image to a new named layer at another spot, optionally with a feathered edge |
+| `stamp_visible` | Merged copy of everything visible on a new layer (first step of a glow) |
+
+### Layers
+
+| Tool | Purpose |
+| --- | --- |
+| `select_layer` | Select layers (as in the Layers panel); no undo step |
+| `reorder_layer` | Move a layer in the stack: `above` or `below` another layer, or `to` top or bottom |
+| `move_layer` | Move layers on the canvas as one block, by `dx`/`dy` or to an absolute `x`/`y` |
+| `transform_layer` | Scale, rotate and/or re-centre one layer |
+| `align_layers` | Align layers to the canvas, the selection or another layer, each on its own or as one group |
+
+### Design
+
+| Tool | Purpose |
+| --- | --- |
+| `add_shape` | Solid-colour rectangle, ellipse or line as a new layer (a shape layer, or a pixel layer if Photoshop refuses the vector shape) |
+| `add_layer_style` | Add a drop shadow to a layer; other effects are kept |
+| `set_layer_style` | Change or hide an existing drop shadow in place |
+| `clear_layer_style` | Remove every layer style from a layer |
 
 ### Output
 
@@ -104,16 +126,19 @@ Note: a Light adjustment layer reports kind `light` (pslab reads Photoshop's bri
 | `compare_preview` | One side-by-side JPEG: before (listed layers hidden) on the left, after on the right; leaves no history |
 | `contact_sheet` | One JPEG tiling the composites of up to 24 open documents in a grid |
 
-Developer tool: `dev_events` returns recorded Photoshop events for discovering batchPlay descriptors.
+### Developer
+
+`dev_events` returns recorded Photoshop events for discovering batchPlay descriptors.
 
 ## Safety
 
 - `crop`, `export`, `save`, `save_psd` and `delete_layer` do nothing unless called with `confirm: true`.
-- Every editing call is one undo step in Photoshop (read-only tools and the file writers export, save and save_psd add none).
+- Every editing call is one undo step in Photoshop, including batches such as `delete_layer layers` (read-only tools, `select_layer` and the file writers export, save and save_psd add none).
 - `delete_layer` refuses the Background layer (`PROTECTED_LAYER`). There is no flatten or close-document tool.
 - `export` works on a temporary copy; the open document is untouched, even with a `preset` (the ratio crop happens on the copy, unlike `crop`). It overwrites a file with the same name.
 - `save_psd` never overwrites a file: it adds `-edit` when the target would be the document's own file and `-2`, `-3` ... when the name is taken. It saves a copy, so the open document keeps its own file (unlike `save` with `format: psd`, which rebinds the document to the new file).
-- `straighten`, `content_aware_fill` and `clone_from` put their result on a new layer; the Background is never edited.
+- `straighten`, `content_aware_fill`, `clone_from` and `stamp_visible` put their result on a new layer; the Background is never edited or moved.
+- While Photoshop is in a modal state (a crop, Free Transform or text edit in progress), tools answer `MODAL_BUSY`; finish or cancel it in Photoshop and retry.
 - Exports go to `~/Documents/pslab-exports/<shoot>/<filename>`, where `<shoot>` is the name of the source file's folder, used as the export subfolder. Set `PSLAB_EXPORT_ROOT` to change the root.
 
 ## Troubleshooting

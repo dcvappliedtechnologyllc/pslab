@@ -22,13 +22,15 @@ import { registerOutputTools } from "../server/dist/tools/output.js";
 import { registerMaskTools } from "../server/dist/tools/masks.js";
 import { registerGeometryTools } from "../server/dist/tools/geometry.js";
 import { registerWorkflowTools } from "../server/dist/tools/workflow.js";
+import { registerLayerTools } from "../server/dist/tools/layers.js";
+import { registerDesignTools } from "../server/dist/tools/design.js";
 
 const { port } = resolvePort(process.env.PSLAB_PORT);
 const bridge = new PluginBridge({ port, timeoutMs: 60000 });
 const listening = await bridge.start();
 console.error(`[harness] bridge on 127.0.0.1:${listening} (waitingForPort=${bridge.waitingForPort})`);
 
-const server = new McpServer({ name: "pslab", version: "0.1.0" });
+const server = new McpServer({ name: "pslab", version: "0.3.0" });
 registerSeeTools(server, bridge);
 registerDevTools(server, bridge);
 registerEditTools(server, bridge);
@@ -37,6 +39,8 @@ registerOutputTools(server, bridge);
 registerMaskTools(server, bridge);
 registerGeometryTools(server, bridge);
 registerWorkflowTools(server, bridge);
+registerLayerTools(server, bridge);
+registerDesignTools(server, bridge);
 const [a, b] = InMemoryTransport.createLinkedPair();
 await server.connect(a);
 const client = new Client({ name: "harness", version: "0" });

@@ -8,6 +8,8 @@ const output = require("./output");
 const geometry = require("./geometry");
 const workflow = require("./workflow");
 const masks = require("./masks");
+const layers = require("./layers");
+const design = require("./design");
 
 module.exports = {
   get_document: see.get_document,
@@ -33,15 +35,26 @@ module.exports = {
   refine_edge: composite.refine_edge,
   match_tone: composite.match_tone,
   blur_layer: composite.blur_layer,
+  set_blur: composite.set_blur,
   crop: output.crop,
   export: output.export,
   save: output.save,
   straighten: geometry.straighten,
   content_aware_fill: geometry.content_aware_fill,
   clone_from: geometry.clone_from,
+  stamp_visible: geometry.stamp_visible,
   save_psd: output.save_psd,
   copy_layers_to: workflow.copy_layers_to,
   open_folder: workflow.open_folder,
   compare_preview: workflow.compare_preview,
   contact_sheet: workflow.contact_sheet,
+  select_layer: layers.select_layer,
+  reorder_layer: layers.reorder_layer,
+  move_layer: layers.move_layer,
+  transform_layer: layers.transform_layer,
+  align_layers: layers.align_layers,
+  add_shape: design.add_shape,
+  add_layer_style: design.add_layer_style,
+  set_layer_style: design.set_layer_style,
+  clear_layer_style: design.clear_layer_style,
 };

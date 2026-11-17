@@ -142,4 +142,44 @@ function estimateTilt(gray, w, h, { vertical = true, maxDeviation = 12 } = {}) {
   };
 }
 
-module.exports = { estimateTilt, toGray, sobel, round1 };
+// ---------- canvas coverage (bug 10) ----------
+
+// True when box b, grown by margin on every side, reaches all four edges of a
+// w x h canvas: the inverse of such a selection is empty, and Photoshop's
+// Delete on an empty selection raises a BLOCKING alert ("The command Delete is
+// not currently available") even with dialogs suppressed.
+function coversCanvas(b, w, h, margin = 0) {
+  if (!b) return false;
+  return b.left - margin <= 0 && b.top - margin <= 0 && b.right + margin >= w && b.bottom + margin >= h;
+}
+
+function polygonArea(pts) {
+  let twice = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) twice += pts[j].x * pts[i].y - pts[i].x * pts[j].y;
+  return Math.abs(twice) / 2;
+}
+
+function polygonPerimeter(pts) {
+  let p = 0;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) p += Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y);
+  return p;
+}
+
+// Conservative: true only when the polygon grown by margin both spans the
+// canvas (its bounding box reaches every edge) and fills at least 99.5% of
+// it. The grown area is taken as area + perimeter * margin. A C-shape whose
+// corners all sit inside the polygon still leaves its notch to sample from.
+function polygonCoversCanvas(pts, w, h, margin = 0) {
+  if (!Array.isArray(pts) || pts.length < 3) return false;
+  const box = {
+    left: Math.min(...pts.map((p) => p.x)),
+    top: Math.min(...pts.map((p) => p.y)),
+    right: Math.max(...pts.map((p) => p.x)),
+    bottom: Math.max(...pts.map((p) => p.y)),
+  };
+  if (!coversCanvas(box, w, h, margin)) return false;
+  const grown = polygonArea(pts) + polygonPerimeter(pts) * margin;
+  return grown >= 0.995 * w * h;
+}
+
+module.exports = { estimateTilt, toGray, sobel, round1, coversCanvas, polygonCoversCanvas };

@@ -4,8 +4,10 @@
 // rejected call never creates a history state.
 const D = require("../descriptors");
 const { runStep, runRead, bp } = require("../step");
-const { findLayer, resolveDoc } = require("../doc");
-const { estimateTilt, toGray, round1 } = require("../geometry");
+const { findLayer, resolveDoc, normEdges: norm, layerBounds } = require("../doc");
+const { estimateTilt, toGray, round1, coversCanvas, polygonCoversCanvas } = require("../geometry");
+const { requireAnchor, placeAbove, isDirectlyAbove } = require("../place");
+const { belowIds, hidePlan, visibleLeaves } = require("../layout");
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -48,17 +50,6 @@ const activeId = (d) => {
   if (!layer) throw codedError("NO_NEW_LAYER", "The new layer was not found after creating it");
   return layer.id;
 };
-
-// A bounds edge may be a number or a unit value ({_value} or {value}).
-function edge(v) {
-  if (v !== null && typeof v === "object") v = "_value" in v ? v._value : v.value;
-  return Number(v);
-}
-
-function norm(b) {
-  if (!b) return null;
-  return { left: edge(b.left), top: edge(b.top), right: edge(b.right), bottom: edge(b.bottom) };
-}
 
 const canvas = (d) => ({ w: Number(d.width), h: Number(d.height) });
 
@@ -191,22 +182,74 @@ function requireName(name) {
   if (typeof name !== "string" || name.length === 0) throw invalidArgs("name is required (a non-empty string)");
 }
 
+// A temporary empty pixel layer: with it showing, Stamp Visible has the two
+// visible layers it needs when only one layer is left to sample.
+const STAMP_HELPER = { _obj: "make", _target: [{ _ref: "layer" }], using: { _obj: "layer", name: "pslab stamp helper" } };
+
+// Layer kinds that paint nothing of their own: they only change what is below.
+const ADJUSTMENT_KINDS = new Set([
+  "brightnessContrast", "levels", "curves", "exposure", "vibrance", "hueSaturation", "colorBalance",
+  "blackAndWhite", "photoFilter", "channelMixer", "colorLookup", "invert", "posterize", "threshold",
+  "gradientMap", "selectiveColor",
+]);
+
+// How the stamp runs once `hide` is hidden, checked before the step:
+// {hide, sole, pad}. Stamp Visible needs two visible (non-group) layers. With
+// one left: the Background is duplicated (sole; it has no opacity, blend,
+// mask or effects, so the copy is the composite); any other layer (pixel,
+// text, smart object, shape) is stamped beside a temporary empty layer (pad),
+// which bakes in its opacity, blend, mask and effects as they show. A lone
+// adjustment layer shows nothing, so it is refused, as is nothing at all.
+function stampPlan(d, hide, verb, emptyHint) {
+  const leaves = visibleLeaves(d.layers, hide);
+  if (leaves.length === 0) throw invalidArgs(`Nothing visible to ${verb}: ${emptyHint}`);
+  if (leaves.length > 1) return { hide, sole: null, pad: false };
+  const only = leaves[0];
+  const kind = String(safe(() => only.kind, ""));
+  if (ADJUSTMENT_KINDS.has(kind)) {
+    throw invalidArgs(
+      `The only visible layer, ${only.id} (${safe(() => only.name, "")}), is a ${kind} adjustment layer: it has ` +
+        `no pixels of its own, so there is nothing to ${verb}; show the layers it adjusts or pick others`,
+    );
+  }
+  const bg = safe(() => only.isBackgroundLayer, false) === true;
+  return { hide, sole: bg ? only.id : null, pad: !bg };
+}
+
 // Stamp Visible with the top layer selected, so the composite lands on top of
-// the stack as a new pixel layer; renamed to `name`. Returns the layer.
-async function stampOnTop(ps, d, name) {
+// the stack as a new pixel layer; renamed to `name`. Returns the layer. pad:
+// only one layer shows, so a temporary empty layer is made on top first and
+// deleted after the stamp (the stamp is then selected again).
+async function stampOnTop(ps, d, name, { pad = false } = {}) {
   const top = Array.from(d.layers || [])[0];
   if (!top) throw codedError("NO_LAYER", "The document has no layers");
   let layer;
-  if (flatten(d.layers).length === 1) {
-    // Stamp Visible is unavailable when the document has a single layer (a
-    // lone Background, say); a copy of that layer is the same composite.
-    layer = await top.duplicate();
-    if (layer) await bp(ps, [D.selectLayerById(layer.id)]);
+  let temp = null;
+  if (pad) {
+    await bp(ps, [D.selectLayerById(top.id), STAMP_HELPER]);
+    temp = activeId(d);
+    // made inside a selected (possibly hidden) top group it may not show: put
+    // it at the top level, above the old top layer, and select it again
+    const helper = findLayer(d, temp);
+    if (helper && !isDirectlyAbove(d, helper, top)) {
+      await helper.move(top, ps.constants.ElementPlacement.PLACEBEFORE);
+      await bp(ps, [D.selectLayerById(temp)]);
+    }
+    await bp(ps, [D.stampVisible()]);
+    layer = findLayer(d, activeId(d));
   } else {
     await bp(ps, [D.selectLayerById(top.id), D.stampVisible()]);
     layer = findLayer(d, activeId(d));
   }
-  if (!layer || layer.id === top.id) throw codedError("NO_NEW_LAYER", "Stamp Visible did not make a new layer");
+  if (!layer || layer.id === top.id || layer.id === temp) {
+    throw codedError("NO_NEW_LAYER", "Stamp Visible did not make a new layer");
+  }
+  if (temp !== null) {
+    const helper = findLayer(d, temp);
+    if (helper) await helper.delete();
+    await bp(ps, [D.selectLayerById(layer.id)]);
+    layer = findLayer(d, layer.id) || layer;
+  }
   layer.name = name;
   // Stamped above a clipped top layer, the new layer joins its clipping group
   // and would only show where the layer below has pixels: release it.
@@ -217,6 +260,66 @@ async function stampOnTop(ps, d, name) {
 // ---------- content_aware_fill ----------
 
 const APRON_PX = 2;
+const SAMPLES = ["visible", "below", "layers"];
+
+// What content_aware_fill samples, checked before the step: a stampPlan. hide
+// is empty for everything visible (sample "visible", or "below" without
+// above), else the visible layers to hide so only the sampled ones show.
+function samplePlan(d, args, hasAbove) {
+  const sample = args.sample ?? "visible";
+  if (!SAMPLES.includes(sample)) throw invalidArgs(`sample must be visible, below or layers, got ${sample}`);
+  const hasList = args.sample_layers !== undefined && args.sample_layers !== null;
+  if (sample === "layers" && !hasList) throw invalidArgs('sample "layers" needs sample_layers (layer ids)');
+  if (sample !== "layers" && hasList) throw invalidArgs('sample_layers is only used with sample: "layers"');
+  let keep = null;
+  if (sample === "below" && hasAbove) keep = belowIds(d.layers, args.above);
+  if (sample === "layers") {
+    const ids = args.sample_layers;
+    if (!Array.isArray(ids) || ids.length === 0) throw invalidArgs("sample_layers must list at least one layer id");
+    for (const id of ids) {
+      if (!findLayer(d, id)) throw codedError("NO_LAYER", `No layer with id ${id}`);
+    }
+    keep = ids;
+  }
+  if (!keep) return stampPlan(d, [], "sample", "every layer is hidden; show one first");
+  return stampPlan(d, hidePlan(d.layers, keep), "sample", "the layers to sample are hidden or empty; show them or pick others");
+}
+
+// The stamp with only the sampled layers showing. Visibility is toggled inside
+// the caller's suspended step and always restored (finally), so the net change
+// is the new layer. With only the Background left, Stamp Visible is not used
+// (it needs more than one visible layer); the Background is duplicated, put on
+// top unless toTop is false (the caller places it), and selected for the fill.
+async function stampSampled(ps, d, name, plan, toTop) {
+  const hidden = [];
+  try {
+    for (const id of plan.hide) {
+      const layer = findLayer(d, id);
+      if (layer) {
+        layer.visible = false;
+        hidden.push(layer);
+      }
+    }
+    if (!plan.sole) return await stampOnTop(ps, d, name, { pad: plan.pad });
+    const src = findLayer(d, plan.sole);
+    const layer = src ? await src.duplicate() : null;
+    if (!layer) throw codedError("NO_NEW_LAYER", "Duplicating the sampled layer did not make a new layer");
+    layer.name = name;
+    if (safe(() => layer.isClippingMask, false) === true) layer.isClippingMask = false;
+    const top = Array.from(d.layers || [])[0];
+    if (toTop && top && top.id !== layer.id) await layer.move(top, ps.constants.ElementPlacement.PLACEBEFORE);
+    await bp(ps, [D.selectLayerById(layer.id)]);
+    return findLayer(d, layer.id) || layer;
+  } finally {
+    for (const layer of hidden) {
+      try {
+        layer.visible = true;
+      } catch {
+        // keep restoring the rest; the step rolls back on failure anyway
+      }
+    }
+  }
+}
 
 async function content_aware_fill(ps, args = {}) {
   const hasBbox = args.bbox !== undefined && args.bbox !== null;
@@ -234,9 +337,24 @@ async function content_aware_fill(ps, args = {}) {
       pts.every((p) => p && isNum(p.x) && isNum(p.y) && p.x >= 0 && p.y >= 0 && p.x <= w && p.y <= h);
     if (!ok) throw invalidArgs(`polygon needs at least 3 points {x, y} inside the ${w}x${h} canvas`);
   }
+  // Bug 10: a region that (with its apron) covers the canvas leaves nothing to
+  // sample and an empty inverse; Photoshop answers with a blocking alert, so
+  // refuse here, before any batchPlay.
+  if (hasBbox ? coversCanvas(args.bbox, w, h, APRON_PX) : polygonCoversCanvas(args.polygon, w, h, APRON_PX)) {
+    throw invalidArgs(
+      "The fill region (plus its 2 px apron) covers the whole canvas, so there is nothing left to sample from; " +
+        "draw it around the object only",
+    );
+  }
+
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(d, args.above);
+  const plan = samplePlan(d, args, hasAbove);
 
   return stepIn(ps, `Claude: content_aware_fill, ${args.name}`, d, async () => {
-    const layer = await stampOnTop(ps, d, args.name);
+    // The stamp is taken on top with only the sampled layers showing; `above`
+    // only moves the finished patch.
+    let layer = await stampSampled(ps, d, args.name, plan, !hasAbove);
     // Fill the region (plus a 2 px apron so the patch blends at its edge) on
     // the stamped copy, then erase everything else so only the patch remains.
     await bp(ps, [
@@ -247,6 +365,7 @@ async function content_aware_fill(ps, args = {}) {
       D.clearSelected(),
       D.deselect(),
     ]);
+    if (hasAbove) layer = await placeAbove(ps, d, layer, args.above);
     const after = findLayer(d, layer.id) || layer;
     return { layer_id: layer.id, bounds: norm(after.bounds) };
   });
@@ -276,13 +395,19 @@ async function clone_from(ps, args = {}) {
   }
   const dx = dst.x - src.left;
   const dy = dst.y - src.top;
+  const fullCanvas = coversCanvas(src, w, h);
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(d, args.above);
+  const plan = stampPlan(d, [], "stamp", "every layer is hidden; show one first");
 
   return stepIn(ps, `Claude: clone_from, ${args.name}`, d, async () => {
-    const layer = await stampOnTop(ps, d, args.name);
+    let layer = await stampSampled(ps, d, args.name, plan, true);
     // Keep only src_bbox of the stamped composite, then move it so its
-    // top-left corner lands on dst.
-    await bp(ps, [D.selectRectangle(src), D.inverseSelection(), D.clearSelected(), D.deselect()]);
-    await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct: 100, dx, dy })]);
+    // top-left corner lands on dst. Bug 10: on the full canvas there is
+    // nothing to erase, and Delete on the empty inverse raises a blocking
+    // alert, so it is skipped (decided before any batchPlay).
+    if (!fullCanvas) await bp(ps, [D.selectRectangle(src), D.inverseSelection(), D.clearSelected(), D.deselect()]);
+    if (dx !== 0 || dy !== 0) await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct: 100, dx, dy })]);
     if (f > 0) {
       // A soft-edged mask: the moved box shrunk by f then feathered by f, so
       // the edge fades out inside the copy instead of past its hard border.
@@ -295,9 +420,26 @@ async function clone_from(ps, args = {}) {
         D.deselect(),
       ]);
     }
+    if (hasAbove) layer = await placeAbove(ps, d, layer, args.above);
     const after = findLayer(d, layer.id) || layer;
     return { layer_id: layer.id, bounds: norm(after.bounds), feather_px: f };
   });
 }
 
-module.exports = { straighten, content_aware_fill, clone_from };
+// ---------- stamp_visible ----------
+
+async function stamp_visible(ps, args = {}) {
+  requireName(args.name);
+  const { d } = resolveDoc(ps, args.doc);
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(d, args.above);
+  const plan = stampPlan(d, [], "stamp", "every layer is hidden; show one first");
+  return stepIn(ps, `Claude: stamp_visible, ${args.name}`, d, async () => {
+    let layer = await stampSampled(ps, d, args.name, plan, true);
+    if (hasAbove) layer = await placeAbove(ps, d, layer, args.above);
+    const after = findLayer(d, layer.id) || layer;
+    return { layer_id: after.id, bounds: layerBounds(after) };
+  });
+}
+
+module.exports = { straighten, content_aware_fill, clone_from, stamp_visible };

@@ -400,3 +400,120 @@ Tool loads), server via `scripts/dev-harness.mjs`. Docs: IMG_0040.JPG (133) and 
 - After the reload: `copy_layers_to src_doc:59 dst_doc:137 layers:[2,3]` → layer_ids [5, 6]
   ("WB neutralize", "Light 1"), both on top of the Straightened smart object in source order,
   masks kept (`hasMask: true`), one history state in 137. All ten P2–P4 items are live-verified.
+
+## 2026-11-16/17, v0.3 waves A and B — built, unit-tested and live-verified 2026-11-17
+
+Input: `docs/handoff-2026-11-15.md` (gaps from the 2026-11-15 session). Plan:
+`docs/plans/2026-11-16-v03-waves-ab.md`. Branch `v03`. 34 tools before, 45 now. Server
+vitest and plugin `node --test` are green; nothing in this entry has been run in Photoshop
+except the A4 repro and the B0 recordings.
+
+### What was built
+
+- Wave A: per-layer `bounds`, `maskEnabled` and (get_document only) `text` in the layer tree
+  (A1); `modal` in get_document and MODAL_BUSY rewriting of NO_LAYER and similar errors while
+  Photoshop is modal (A2); the shared placement helper `plugin/lib/place.js` (A3); the bug 1
+  fix (A5); the bug 9 fix, no exact integer downscale ratios in pixel reads (A6); the bug 10
+  guard and `stamp_visible` (A7); `above` on add_pixel_layer, copy_to, clone_from and
+  content_aware_fill (A8–A10); `delete_layer layers` in one step (A11); `select_layer`,
+  `reorder_layer`, `move_layer` in the new `layers` group (A12–A14).
+- Wave B: `transform_layer` (B1), `align_layers` (B2), content_aware_fill `sample` /
+  `sample_layers` (B3), `add_shape` in the new `design` group (B4), `add_layer_style`,
+  `set_layer_style`, `clear_layer_style` for drop shadows (B5–B7), `set_blur` (B8).
+- New hints profile `edit` (move_layer, transform_layer). The destructive set is unchanged.
+
+### Bug 1 root cause (A4, live 2026-11-16)
+
+Repro on a 449x800 JPG: a levels layer pushing everything to white, then `mask_from_polygon`
+with a 260x8 rectangle. The data was right the whole time (render_preview, preview_mask, the
+Layers panel thumbnail and History all correct), but Photoshop's canvas kept showing the layer
+as it was before the mask write: all white. `imaging.putLayerMask` does not invalidate the
+display, and it leaves the mask channel targeted. Hiding and showing the layer redrew it. So
+the "whole screen white" of 2026-11-15 was a stale canvas. Fix (A5): every mask write toggles
+the layer's visibility through the DOM inside the same step and re-selects the RGB channel;
+`add_adjustment` deselects before it makes the layer.
+
+### Bug 10 (live 2026-11-16)
+
+`clone_from` on the full canvas did not just fail: it raised a blocking Photoshop alert ("The
+command Delete is not currently available") despite `dontDisplay`, and every later call hung
+until the alert was dismissed by hand. The fix therefore guards before any batchPlay: a
+full-canvas `src_bbox` skips the inverse-and-delete, and a content_aware_fill region that
+covers the canvas is refused with INVALID_ARGS.
+
+### Recorded descriptors (B0, live 2026-11-16, Photoshop 27.11)
+
+`drop_shadow.js` (`{set, fields}`, a new format without `make`), `clear_layer_style.js`
+(`disableLayerStyle`) and `edit_smart_filter.js` (filterFX `_index` plus radius) were recorded
+by hand; move-by-offset, Arrange, Align and Free Transform were recorded as references.
+Shapes could not be recorded (canvas input does not reach Photoshop under background control),
+so `shape_rect.js` and `shape_ellipse.js` are drafts (`draft: true`) taken from a researched
+`make contentLayer` descriptor; `add_shape` falls back to a pixel layer when Photoshop refuses
+them. See `plugin/lib/recorded/README.md`.
+
+### Review rounds
+
+- Round 1 (after A14 and B1–B3): modal classification reads only marquee tool ids as a
+  transform; region_stats on a layer skips the bounds reconcile; a notched polygon that does
+  not fill 99.5% of the canvas still runs; MODAL_BUSY passes through the dispatcher without a
+  second probe; the plan notes the full-canvas refusal is intended.
+- Round 2 (after B4–B8): set_layer_style keeps Use Global Light unless an angle is given;
+  set_blur requires `index` when a layer has several Gaussian Blurs (the filterFX order is
+  unverified); add_shape deletes a stray layer from a failed vector make and is never clipped;
+  reorder_layer to top/bottom releases the clip; layer styles switch the layer's effects on when
+  the shadow is enabled; descriptions name side effects; transform_layer and align_layers make
+  no step when nothing changes; a listed group without bounds no longer swallows its children;
+  the Stamp Visible guard counts visible layers of any kind, and a lone non-Background layer is
+  stamped beside a temporary empty layer instead of duplicated.
+
+### Live verified 2026-11-17 (Photoshop 28.0)
+
+Plugin 0.3.0, every call through the dev harness. Photoshop now reports its version as 28.0.0.
+
+- A2 modal: during Free Transform, `get_document` returns a `modal` value, and `set_layer` and
+  `render_preview` answer MODAL_BUSY (not NO_LAYER). The kind came back "busy" rather than
+  "transform"; fixed, see below.
+- A5 (bug 1): the canvas shows the masked result right after the mask write and the RGB channel
+  is targeted again.
+- A6 (bug 9): the preview rule holds; a 2:1 region asked for 199 px.
+- A7 (bug 10): a full-canvas `clone_from` runs with no alert; a full-canvas
+  `content_aware_fill` is refused before any batchPlay. `stamp_visible` works.
+- A8–A10: `above` placement on add_pixel_layer, copy_to, clone_from and content_aware_fill.
+- A11: `delete_layer` with a list, one step.
+- A12–A14: `select_layer`, `reorder_layer`, `move_layer` (but see the move fix below).
+- B1, B2: `transform_layer`, `align_layers`.
+- B3: content_aware_fill `sample:"below"` and `sample_layers`.
+- B4: the draft vector shape descriptors are accepted: `add_shape` returned `vector:true` for
+  rect, line and ellipse, with exact bounds.
+- B5–B7: drop shadow add, set, disable and clear (but see the `removed` fix below).
+- B8: `set_blur`, including the refusal without `index` on a layer with two Gaussian Blurs.
+
+Facts found:
+
+- Editing a lower smart filter (set_blur `index:1` under a second blur) raised a Photoshop
+  notice, "Smart filters stacked on top of this filter will not preview…", which blocked until
+  dismissed. It was dismissed with "Don't show again" on this machine, so other machines may
+  still hit it.
+
+Fixed after the live run (one commit each, TDD):
+
+- `move_layer` (and `align_layers`) moved every selected layer: the DOM translate and the
+  transform fallback act on the whole layer selection. Each layer is now made the only selected
+  one before it is translated; the moved layers stay selected. `transform_layer` already
+  selected by id.
+- `modal` read "busy" during Free Transform because the probe fails with error 9. modalState
+  now reports a tracked dialog first, then a Crop Preview layer, then the tracked tool modal
+  (transform, crop, text), and "busy" only when no modal is tracked.
+- `clear_layer_style` `removed` listed dropShadow, innerShadowMulti, solidFillMulti,
+  gradientFillMulti and frameFXMulti on a layer with only a drop shadow: Photoshop returns every
+  effect key, unused ones with `enabled:false`. It now lists effects that are present and
+  enabled (a `*Multi` list when one entry is on).
+
+### Still pending live
+
+- The crop and text modal kinds (only Free Transform was exercised), and the modal fix above.
+- The set_blur filter order with two blurs: `index:1` was edited without error, but which
+  filter's radius changed was not confirmed.
+- Stamp Visible with a lone non-pixel layer (the temporary empty layer path).
+- `above:<group>` placement.
+- The move_layer and clear_layer_style fixes above.

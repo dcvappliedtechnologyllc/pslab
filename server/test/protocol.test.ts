@@ -50,6 +50,25 @@ describe("parseFrame", () => {
     expect(() => parseFrame(frame({ ...doc, layers: [nested] }))).toThrow(/hasMask/);
     expect(parseFrame(frame({ ...doc, layers: [{ ...nested, children: [{ ...layer, id: 3 }] }] })).type).toBe("response");
   });
+  it("keeps bounds, maskEnabled, text and modal after parsing (zod would strip unknown keys)", () => {
+    const text = { content: "MY ROOM", font: "Montserrat-Bold", style: "Bold", size_pt: 48, color: { r: 255, g: 255, b: 255 }, justification: "center" };
+    const rich = {
+      ...doc,
+      modal: "crop",
+      layers: [
+        { ...layer, id: 2, kind: "text", bounds: { left: 200, top: 567, right: 2250, bottom: 681 }, maskEnabled: null, text },
+        { ...layer, id: 3, kind: "levels", bounds: null, hasMask: true, maskEnabled: false },
+      ],
+    };
+    const f = parseFrame(JSON.stringify({ type: "response", id: "r-1", ok: true, result: null, doc: rich }));
+    if (f.type !== "response" || !f.ok) throw new Error("expected ok response");
+    expect(f.doc).toEqual(rich);
+  });
+  it("still accepts a doc from an older plugin without the new fields", () => {
+    const f = parseFrame(JSON.stringify({ type: "response", id: "r-1", ok: true, result: null, doc }));
+    if (f.type !== "response" || !f.ok) throw new Error("expected ok response");
+    expect(f.doc).toEqual(doc);
+  });
   it("rejects invalid JSON", () => {
     expect(() => parseFrame("not json")).toThrow();
   });

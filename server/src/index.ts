@@ -9,6 +9,8 @@ import { registerOutputTools } from "./tools/output.js";
 import { registerGeometryTools } from "./tools/geometry.js";
 import { registerWorkflowTools } from "./tools/workflow.js";
 import { registerMaskTools } from "./tools/masks.js";
+import { registerLayerTools } from "./tools/layers.js";
+import { registerDesignTools } from "./tools/design.js";
 
 // stdout is the MCP protocol channel: log to stderr only.
 async function main(): Promise<void> {
@@ -29,7 +31,7 @@ async function main(): Promise<void> {
     console.error(`[pslab] bridge listening on 127.0.0.1:${listening}`);
   }
 
-  const server = new McpServer({ name: "pslab", version: "0.1.0" });
+  const server = new McpServer({ name: "pslab", version: "0.3.0" });
   registerSeeTools(server, bridge);
   registerDevTools(server, bridge);
   registerEditTools(server, bridge);
@@ -38,6 +40,8 @@ async function main(): Promise<void> {
   registerGeometryTools(server, bridge);
   registerWorkflowTools(server, bridge);
   registerMaskTools(server, bridge);
+  registerLayerTools(server, bridge);
+  registerDesignTools(server, bridge);
 
   let shuttingDown = false;
   const shutdown = (why: string): void => {

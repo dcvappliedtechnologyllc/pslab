@@ -60,6 +60,35 @@ describe("see/dev tools over MCP", () => {
     expect((seen as { action: string }).action).toBe("get_document");
   });
 
+  it("get_document passes layer bounds, maskEnabled, text and modal through", async () => {
+    await plugin.connect();
+    const text = { content: "MY ROOM", font: "Montserrat-Bold", style: "Bold", size_pt: 48, color: { r: 255, g: 255, b: 255 }, justification: "center" };
+    const rich = {
+      ...DOC,
+      modal: null,
+      layers: [
+        { id: 2, name: "Title", kind: "text", visible: true, opacity: 100, blend: "normal", clipped: false, hasMask: false,
+          maskEnabled: null, bounds: { left: 200, top: 567, right: 2250, bottom: 681 }, text, children: [] },
+      ],
+    };
+    plugin.onRequest(async () => ({ ok: true, result: { ...rich, open_docs: [{ id: 1, name: "a.psd" }] }, doc: DOC }));
+    const res = await client.callTool({ name: "get_document", arguments: {} });
+    expect(res.isError).toBeFalsy();
+    const out = JSON.parse(textOf(res));
+    expect(out.doc).toEqual(rich);
+    expect(out.doc.layers[0].bounds).toEqual({ left: 200, top: 567, right: 2250, bottom: 681 });
+    expect(out.doc.layers[0].text.content).toBe("MY ROOM");
+  });
+
+  it("get_document's description explains bounds, maskEnabled and modal", async () => {
+    const { tools } = await client.listTools();
+    const d = tools.find((t) => t.name === "get_document")!.description!;
+    expect(d).toContain("bounds");
+    expect(d).toContain("maskEnabled");
+    expect(d).toContain("MODAL_BUSY");
+    expect(d).toContain('"crop"');
+  });
+
   it("get_document puts the requested document's summary in doc only once", async () => {
     await plugin.connect();
     const other: DocSummary = { ...DOC, id: 2, name: "b.psd" };
@@ -162,6 +191,25 @@ describe("see/dev tools over MCP", () => {
       action: "render_preview",
       args: { region: { left: -10, top: 0, right: 4000, bottom: 50 }, max_px: 1500 },
     });
+  });
+
+  it("render_preview passes a region mismatch warning through in the text block", async () => {
+    await plugin.connect();
+    plugin.onRequest(async () => ({
+      ok: true,
+      result: {
+        jpeg_base64: "SlBFRw==",
+        preview: { w: 1024, h: 350 },
+        region: { left: 94, top: 277, right: 2144, bottom: 977 },
+        scale: 2050 / 1024,
+        warning: "Photoshop returned pixels for {left 94, ...}",
+      },
+      doc: DOC,
+    }));
+    const res = await client.callTool({ name: "render_preview", arguments: { max_px: 1025 } });
+    const text = JSON.parse((res.content as Array<Record<string, unknown>>)[1].text as string);
+    expect(text.warning).toMatch(/returned pixels/);
+    expect(text.region).toEqual({ left: 94, top: 277, right: 2144, bottom: 977 });
   });
 
   it("render_preview rejects max_px out of range", async () => {

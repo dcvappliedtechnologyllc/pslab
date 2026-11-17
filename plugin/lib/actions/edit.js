@@ -3,10 +3,12 @@
 const D = require("../descriptors");
 const { runStep, runRead, bp } = require("../step");
 const { regionStats, clampBbox } = require("../stats");
+const { safeTargetWidth } = require("../preview");
 const { readPixels } = require("./see");
 const { bitsOf, findLayer, kindOverrides, resolveDoc, hasUserMaskStrict } = require("../doc");
 const { rasterizeStrokes, polygonMask, imageDataFromMask } = require("../raster");
 const defaultRecorded = require("../recorded/index");
+const { requireAnchor, selectAnchor, locate } = require("../place");
 
 function codedError(code, message) {
   const e = new Error(message);
@@ -83,21 +85,25 @@ const isDescriptor = (v) => isObj(v) && typeof v._obj === "string";
 const invalid = (message) => codedError("RECORDED_INVALID", `Recorded descriptor invalid: ${message}`);
 
 // recorded = {make, set?, fields: {param: "make.<path>" | "set.<path>"}} -> [make, set?]
-// with every field set to params[param] (0 when absent). A field holding a
-// unit value ({_unit,_value}) keeps its unit.
+// or {set, fields: {param: "set.<path>"}} -> [set] (an edit of an existing
+// layer: layer style, smart filter), with every field set to params[param]
+// (0 when absent). A field holding a unit value ({_unit,_value}) keeps its unit.
 function applyParams(recorded, params = {}) {
   if (!isObj(recorded)) throw invalid("not an object");
-  if (!isDescriptor(recorded.make)) throw invalid("make must be a descriptor");
+  const hasMake = recorded.make !== undefined;
+  if (hasMake && !isDescriptor(recorded.make)) throw invalid("make must be a descriptor");
   if (recorded.set !== undefined && !isDescriptor(recorded.set)) throw invalid("set must be a descriptor");
+  if (!hasMake && recorded.set === undefined) throw invalid("make (or set) must be a descriptor");
   if (!isObj(recorded.fields)) throw invalid("fields must be an object");
-  const out = { make: JSON.parse(JSON.stringify(recorded.make)) };
+  const out = {};
+  if (hasMake) out.make = JSON.parse(JSON.stringify(recorded.make));
   if (recorded.set !== undefined) out.set = JSON.parse(JSON.stringify(recorded.set));
   for (const [param, path] of Object.entries(recorded.fields)) {
     if (typeof path !== "string") throw invalid(`path for ${param} must be a string`);
     const keys = path.split(".");
     const root = keys.shift();
     if (!Object.prototype.hasOwnProperty.call(out, root) || keys.length === 0) {
-      throw invalid(`path ${path} must start with make. or set.`);
+      throw invalid(`path ${path} must start with ${Object.keys(out).map((k) => `${k}.`).join(" or ")}`);
     }
     let node = out[root];
     for (const k of keys.slice(0, -1)) {
@@ -110,7 +116,7 @@ function applyParams(recorded, params = {}) {
     const v = num(params, param);
     node[leaf] = isObj(node[leaf]) && "_unit" in node[leaf] ? { ...node[leaf], _value: v } : v;
   }
-  return out.set ? [out.make, out.set] : [out.make];
+  return [out.make, out.set].filter(Boolean);
 }
 
 // ---------- add_adjustment ----------
@@ -232,6 +238,8 @@ async function add_adjustment(ps, args = {}) {
   const anchor = args.above ?? args.clip_to;
   return runStep(ps, adjustmentHistoryName(type, params), d.id, async () => {
     await activate(ps, d);
+    // an active selection would become the new layer's mask (bug 1)
+    await bp(ps, [deselect()]);
     if (anchor !== undefined && anchor !== null) await bp(ps, [D.selectLayerById(anchor)]);
     let id;
     if (group) {
@@ -254,13 +262,23 @@ async function add_adjustment(ps, args = {}) {
 
 async function add_pixel_layer(ps, args = {}) {
   const { d } = resolveDoc(ps, args.doc);
+  const hasAbove = args.above !== undefined && args.above !== null;
+  if (hasAbove) requireAnchor(d, args.above);
   const using = { _obj: "layer" };
   if (args.name !== undefined) using.name = args.name;
   const name = args.name !== undefined ? `Claude: add_pixel_layer, ${args.name}` : "Claude: add_pixel_layer";
   return runStep(ps, name, d.id, async () => {
     await activate(ps, d);
+    // a make lands directly above the selected layer
+    if (hasAbove) await selectAnchor(ps, args.above);
     await bp(ps, [{ _obj: "make", _target: [{ _ref: "layer" }], using }]);
-    return { layer_id: newLayerId(ps) };
+    const id = newLayerId(ps);
+    if (hasAbove) {
+      // made above a clipped layer, the new one joins the clip: release it
+      const layer = findLayer(d, id);
+      if (layer && safeRead(() => layer.isClippingMask, false) === true) layer.isClippingMask = false;
+    }
+    return { layer_id: id };
   });
 }
 
@@ -293,6 +311,30 @@ async function readMask(ps, d, layerID, w, h) {
   }
 }
 
+// Bug 1: an imaging-API write (putLayerMask, putPixels) does not invalidate
+// Photoshop's display cache, so the canvas keeps showing the layer as it was,
+// and putLayerMask leaves the mask channel targeted. Inside the caller's step:
+// toggle the layer's visibility through the DOM (forces a redraw, no extra
+// history state), then target the RGB channel so later clicks hit pixels.
+// Cosmetic only: a failure here never fails the write.
+async function refreshAfterImaging(ps, d, layerID) {
+  const layer = findLayer(d, layerID);
+  if (layer) {
+    try {
+      const v = layer.visible !== false;
+      layer.visible = !v;
+      layer.visible = v;
+    } catch {
+      // the data is written; only the screen may be stale
+    }
+  }
+  try {
+    await bp(ps, [D.selectRgbChannel()]);
+  } catch {
+    // as above
+  }
+}
+
 async function writeMask(ps, d, layerID, buf, w, h) {
   const imageData = await imageDataFromMask(ps, buf, w, h);
   try {
@@ -300,6 +342,7 @@ async function writeMask(ps, d, layerID, buf, w, h) {
   } finally {
     imageData.dispose();
   }
+  await refreshAfterImaging(ps, d, layerID);
 }
 
 async function mask_from_polygon(ps, args = {}) {
@@ -453,19 +496,52 @@ function isProtectedLayer(layer) {
   return String(safeRead(() => layer.kind, "")) === "pixel" && String(safeRead(() => layer.name, "")) === "Background";
 }
 
-// Needs confirm: true here as well as on the server (defence in depth).
-async function delete_layer(ps, args = {}) {
-  if (args.confirm !== true) throw codedError("CONFIRM_REQUIRED", "Set confirm: true to delete_layer.");
-  const { d } = resolveDoc(ps, args.doc);
-  const layer = requireLayer(d, args.layer);
+function requireDeletable(d, id) {
+  const layer = requireLayer(d, id);
   const name = String(safeRead(() => layer.name, ""));
   if (isProtectedLayer(layer)) {
-    throw codedError("PROTECTED_LAYER", `Layer ${args.layer} (${name}) is the Background layer and is never deleted`);
+    throw codedError("PROTECTED_LAYER", `Layer ${id} (${name}) is the Background layer and is never deleted`);
   }
-  const id = layer.id;
-  return stepIn(ps, `Claude: delete_layer, ${name}`, d, async () => {
-    await layer.delete();
-    return { ok: true, deleted: { id, name } };
+  return { layer, id: layer.id, name };
+}
+
+const MAX_DELETE = 100;
+
+// Needs confirm: true here as well as on the server (defence in depth).
+// Exactly one of layer (one id) or layers (1..100 ids, one history step).
+async function delete_layer(ps, args = {}) {
+  if (args.confirm !== true) throw codedError("CONFIRM_REQUIRED", "Set confirm: true to delete_layer.");
+  const hasOne = args.layer !== undefined && args.layer !== null;
+  const hasMany = args.layers !== undefined && args.layers !== null;
+  if (hasOne === hasMany) throw codedError("INVALID_ARGS", "Give exactly one of layer or layers");
+  const { d } = resolveDoc(ps, args.doc);
+
+  if (hasOne) {
+    const { layer, id, name } = requireDeletable(d, args.layer);
+    return stepIn(ps, `Claude: delete_layer, ${name}`, d, async () => {
+      await layer.delete();
+      return { ok: true, deleted: { id, name } };
+    });
+  }
+
+  const ids = args.layers;
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > MAX_DELETE) {
+    throw codedError("INVALID_ARGS", `layers must list 1 to ${MAX_DELETE} layer ids`);
+  }
+  if (new Set(ids).size !== ids.length) throw codedError("INVALID_ARGS", "layers lists the same id twice");
+  for (const id of ids) requireLayer(d, id); // NO_LAYER for any missing id first
+  const targets = ids.map((id) => requireDeletable(d, id));
+  // A listed group deletes its contents with it; deleting a child first would
+  // be redundant, and a later group delete would then fail on a stale tree.
+  const listed = new Set(ids);
+  const own = targets.filter((t) => {
+    const at = locate(d, t.id);
+    return !(at && at.parents.some((p) => listed.has(p.id)));
+  });
+  const historyName = targets.length === 1 ? `Claude: delete_layer, ${targets[0].name}` : `Claude: delete_layer, ${targets.length} layers`;
+  return stepIn(ps, historyName, d, async () => {
+    for (const t of own) await t.layer.delete();
+    return { ok: true, deleted: targets.map(({ id, name }) => ({ id, name })) };
   });
 }
 
@@ -495,8 +571,9 @@ function whiteBalanceLevels(mean, strength = 1, keepWarmth = 0) {
 
 // layer: measure that layer's own pixels; omitted, the composite.
 async function patchMean(ps, d, bbox, label, layer) {
-  const bw = bbox.right - bbox.left;
-  const targetSize = bw > 256 ? { width: 256 } : null;
+  // never an exact integer downscale ratio (bug 9)
+  const tw = safeTargetWidth(bbox.right - bbox.left, 256);
+  const targetSize = tw === null ? null : { width: tw };
   return runRead(ps, label, async () => {
     const imageData = await readPixels(ps, d, bbox, targetSize, layer);
     try {
@@ -573,5 +650,5 @@ module.exports = {
   add_adjustment, add_pixel_layer, mask_from_polygon, mask_from_subject, paint_mask, set_layer, delete_layer, set_adjustment,
   applyParams, setRecorded,
   // shared with masks.js
-  codedError, requireLayer, stepIn, toBytes, writeMask,
+  codedError, requireLayer, stepIn, toBytes, writeMask, refreshAfterImaging, isProtectedLayer,
 };

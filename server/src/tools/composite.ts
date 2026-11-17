@@ -45,8 +45,9 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
         "With use_selection (default true) only the part inside src_doc's active selection is copied (run select_object first). " +
         "The layer is converted to the destination document's color profile. " +
         "transform.scale_pct scales it (100 = same size); cx, cy are the image-pixel position in the destination where the " +
-        "pasted object's center lands after scaling. dst_doc is left as the active document; pass doc: dst_doc to the " +
-        "layer tools that follow. One undoable history step in each document.",
+        "pasted object's center lands after scaling. It lands above dst_doc's active layer, or directly above the layer " +
+        "id given as above (inside that layer's group, if any; never clipped). dst_doc is left as the active document; " +
+        "pass doc: dst_doc to the layer tools that follow. One undoable history step in each document.",
       inputSchema: {
         src_doc: z.number().int().describe("Source document id"),
         src_layer: z.number().int().optional().describe("Source layer id; defaults to the source document's active layer"),
@@ -62,6 +63,7 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
           .min(1)
           .optional()
           .describe('Name for the new layer; defaults to "<source layer> from <source document>"'),
+        above: z.number().int().optional().describe("Layer id in dst_doc the copy goes directly above"),
       },
     },
     forward(bridge, "copy_to"),
@@ -122,5 +124,26 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
       },
     },
     forward(bridge, "blur_layer"),
+  );
+
+  server.registerTool(
+    "set_blur",
+    {
+      annotations: hints.set,
+      description:
+        "Change the radius of a Gaussian Blur smart filter that blur_layer added, in place (no second filter, no " +
+        "re-wrapping), on a smart object layer in doc. radius_px 0.1..250. index picks a Gaussian Blur counted from " +
+        "the bottom of the Smart Filters list (1 = the first applied); it is required when the layer has more than " +
+        "one (INVALID_ARGS otherwise) and may be left out when there is one. NO_SMART_FILTER when the layer is not a smart object or has no Gaussian Blur smart filter (use " +
+        "blur_layer first). Returns layer_id, radius_px, filter_index and gaussian_blurs (how many there are). One " +
+        "undoable history step.",
+      inputSchema: {
+        doc: z.number().int().optional().describe("Document id; defaults to the active document"),
+        layer: z.number().int().describe("Layer id of the smart object"),
+        radius_px: z.number().min(0.1).max(250).describe("New blur radius in pixels, 0.1..250"),
+        index: z.number().int().min(1).optional().describe("Which Gaussian Blur, counted from the bottom (1 = first applied); required when there are several"),
+      },
+    },
+    forward(bridge, "set_blur"),
   );
 }
