@@ -401,7 +401,7 @@ Tool loads), server via `scripts/dev-harness.mjs`. Docs: IMG_0040.JPG (133) and 
   ("WB neutralize", "Light 1"), both on top of the Straightened smart object in source order,
   masks kept (`hasMask: true`), one history state in 137. All ten P2–P4 items are live-verified.
 
-## 2026-11-16/17, v0.3 waves A and B — built and unit-tested; live verification pending
+## 2026-11-16/17, v0.3 waves A and B — built, unit-tested and live-verified 2026-11-17
 
 Input: `docs/handoff-2026-11-15.md` (gaps from the 2026-11-15 session). Plan:
 `docs/plans/2026-11-16-v03-waves-ab.md`. Branch `v03`. 34 tools before, 45 now. Server
@@ -466,56 +466,54 @@ them. See `plugin/lib/recorded/README.md`.
   the Stamp Visible guard counts visible layers of any kind, and a lone non-Background layer is
   stamped beside a temporary empty layer instead of duplicated.
 
-### Live verification pending
+### Live verified 2026-11-17 (Photoshop 28.0)
 
-None of these has been run in Photoshop yet. From the plan's live-check lines:
+Plugin 0.3.0, every call through the dev harness. Photoshop now reports its version as 28.0.0.
 
-- A2 modal: start a crop by hand and leave it open; `get_document` returns `modal: "crop"`;
-  `set_layer {layer, opacity:50}` returns MODAL_BUSY, not NO_LAYER; Esc and repeat gives
-  `modal: null` and the call succeeds; repeat with Free Transform ("transform") and while
-  editing text ("text").
-- A5: rerun the A4 repro including the panel clicks; the composite stays correct, get_document
-  shows `maskEnabled: true` on both layers, and History shows one state per call.
-- A6: `clone_from src_bbox:{0,0,200,200} dst:{1000,1000}`, then `render_preview region
-  {400,800,2400,1800}` at `max_px` 1000 and 999 (and ratios 3 and 4); the patch corner maps
-  back to (1000, 1000) ±1 px at every `max_px`, and `region_stats` on bbox 1000..2024 matches
-  stats read at full resolution.
-- A7: `clone_from src_bbox:{0,0,W,H} dst:{0,0} name:"Full"` gives one state with bounds equal to
-  the canvas (and no blocking alert); `stamp_visible {name:"Stamp", above:<Background id>}`
-  lands directly above the Background.
-- A8: `add_pixel_layer {name:"P", above:<Background id>}` sits directly above the Background.
-- A9: copy the title from IMG_8611 into the 9:16 doc with `above:<Background id>`; it lands
-  under the Vignette/Light layers; without `above` it lands as before.
-- A10: `content_aware_fill {bbox:<ceiling light>, name:"Light removed", above:<Background id>}`
-  lands under the adjustment stack; toggling a Light layer lights the patch consistently.
-- A11: `delete_layer {layers:[a,b,c], confirm:true}` gives one History state; undo restores all
-  three.
-- A12: `select_layer {layers:[t1,t2]}`, then get_document: `activeLayerId` is t1 and the Layers
-  panel shows both highlighted (the `addToSelection` modifier is inferred).
-- A13: move "Vignette" above the text layers and back; `to:"bottom"` puts it just above the
-  Background.
-- A14: move the title and two bars by `dy:100` in one call; bounds shift by exactly 100, one
-  "Claude: move_layer" state; an absolute `{x:200}` puts the block's left at 200.
-- B1: scale the title to 76% with cx at the canvas centre; bounds width is 0.76 x the old width
-  ±1 and the centre lands where asked.
-- B2: title and bars `as_group:true horizontal:"center"` to canvas puts the union centre at
-  W/2 ±1, other layers untouched.
-- B3: on the 9:16 doc with title and Light layers, `content_aware_fill {bbox:<ceiling light>,
-  name:"Light removed", sample:"below", above:<Background id>}`; the patch holds no text and no
-  lighting, and toggling the Light layers lights it consistently.
-- B4: two white 260x8 bars above the title; get_document bounds match exactly and the kind is a
-  solid-colour shape layer (or `vector:false` if the draft is refused).
-- B5: a drop shadow on the title text and a bar shows as an fx row; editing the text keeps the
-  shadow; get_document bounds are unchanged.
-- B6: change the shadow opacity 35 to 60 and size 10 to 4 in place.
-- B7: clear the bar's shadow; one state; undo restores it.
-- B8: `blur_layer` 10 px, then `set_blur` 4 px; the Smart Filters list still has one Gaussian
-  Blur and its dialog shows 4.
-- The stamp-with-empty-layer assumption: Stamp Visible with one visible non-Background layer
-  plus a temporary empty layer gives a stamp of that layer alone, and the empty layer is
-  removed inside the same step (content_aware_fill, clone_from, stamp_visible).
-- The set_blur filter order: whether the `smartObject.filterFX` list is in `_index` order with 1
-  as the bottom (first applied) filter, as the recording suggests.
-- The draft shape descriptors: whether Photoshop accepts the `make contentLayer` drafts in
-  `shape_rect.js` / `shape_ellipse.js`; if it does, replace them with a live recording and drop
-  `draft`.
+- A2 modal: during Free Transform, `get_document` returns a `modal` value, and `set_layer` and
+  `render_preview` answer MODAL_BUSY (not NO_LAYER). The kind came back "busy" rather than
+  "transform"; fixed, see below.
+- A5 (bug 1): the canvas shows the masked result right after the mask write and the RGB channel
+  is targeted again.
+- A6 (bug 9): the preview rule holds; a 2:1 region asked for 199 px.
+- A7 (bug 10): a full-canvas `clone_from` runs with no alert; a full-canvas
+  `content_aware_fill` is refused before any batchPlay. `stamp_visible` works.
+- A8–A10: `above` placement on add_pixel_layer, copy_to, clone_from and content_aware_fill.
+- A11: `delete_layer` with a list, one step.
+- A12–A14: `select_layer`, `reorder_layer`, `move_layer` (but see the move fix below).
+- B1, B2: `transform_layer`, `align_layers`.
+- B3: content_aware_fill `sample:"below"` and `sample_layers`.
+- B4: the draft vector shape descriptors are accepted: `add_shape` returned `vector:true` for
+  rect, line and ellipse, with exact bounds.
+- B5–B7: drop shadow add, set, disable and clear (but see the `removed` fix below).
+- B8: `set_blur`, including the refusal without `index` on a layer with two Gaussian Blurs.
+
+Facts found:
+
+- Editing a lower smart filter (set_blur `index:1` under a second blur) raised a Photoshop
+  notice, "Smart filters stacked on top of this filter will not preview…", which blocked until
+  dismissed. It was dismissed with "Don't show again" on this machine, so other machines may
+  still hit it.
+
+Fixed after the live run (one commit each, TDD):
+
+- `move_layer` (and `align_layers`) moved every selected layer: the DOM translate and the
+  transform fallback act on the whole layer selection. Each layer is now made the only selected
+  one before it is translated; the moved layers stay selected. `transform_layer` already
+  selected by id.
+- `modal` read "busy" during Free Transform because the probe fails with error 9. modalState
+  now reports a tracked dialog first, then a Crop Preview layer, then the tracked tool modal
+  (transform, crop, text), and "busy" only when no modal is tracked.
+- `clear_layer_style` `removed` listed dropShadow, innerShadowMulti, solidFillMulti,
+  gradientFillMulti and frameFXMulti on a layer with only a drop shadow: Photoshop returns every
+  effect key, unused ones with `enabled:false`. It now lists effects that are present and
+  enabled (a `*Multi` list when one entry is on).
+
+### Still pending live
+
+- The crop and text modal kinds (only Free Transform was exercised), and the modal fix above.
+- The set_blur filter order with two blurs: `index:1` was edited without error, but which
+  filter's radius changed was not confirmed.
+- Stamp Visible with a lone non-pixel layer (the temporary empty layer path).
+- `above:<group>` placement.
+- The move_layer and clear_layer_style fixes above.
