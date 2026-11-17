@@ -480,6 +480,23 @@ test("clear_layer_style plays the recorded disableLayerStyle on the selected lay
   ]);
 });
 
+test("clear_layer_style removed lists only the effects that were on (live shape: every key, unused ones disabled)", async () => {
+  const off = (o) => ({ _obj: o, enabled: false, present: false });
+  const live = {
+    _obj: "layerEffects",
+    scale: pct(100),
+    masterFXSwitch: true,
+    dropShadow: CURRENT_SHADOW,
+    innerShadowMulti: [off("innerShadow")],
+    solidFillMulti: [off("solidFill")],
+    gradientFillMulti: [off("gradientFill")],
+    frameFXMulti: [off("frameFX")],
+  };
+  const ps = makeStub({ gets: effectsGet({ 3: live }) });
+  const r = await design.clear_layer_style(ps, { doc: 1, layer: 3 });
+  assert.deepEqual(r, { ok: true, layer_id: 3, cleared: true, removed: ["dropShadow"] });
+});
+
 test("clear_layer_style without effects changes nothing and makes no step", async () => {
   const ps = makeStub({ gets: effectsGet({ 3: { _obj: "layerEffects", scale: pct(100) } }) });
   assert.deepEqual(await design.clear_layer_style(ps, { doc: 1, layer: 3 }), { ok: true, layer_id: 3, cleared: false, removed: [] });

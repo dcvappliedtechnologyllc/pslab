@@ -315,7 +315,7 @@ async function clear_layer_style(ps, args = {}) {
   const layer = requireLayer(d, args.layer);
   const existing = await readEffects(ps, d, layer.id);
   if (!E.hasEffects(existing)) return { ok: true, layer_id: layer.id, cleared: false, removed: [] };
-  const removed = E.effectKeys(existing);
+  const removed = E.activeEffectKeys(existing);
   const rec = recordedMap().clear_layer_style;
   const desc = usable(rec) && typeof rec._obj === "string" ? clone(rec) : clearAllEffects(existing);
   return stepIn(ps, `Claude: clear_layer_style, ${nameOf(layer)}`, d, async () => {

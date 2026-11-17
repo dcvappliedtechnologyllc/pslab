@@ -23,6 +23,16 @@ function effectKeys(le) {
 }
 const hasEffects = (le) => effectKeys(le).length > 0;
 
+// An effect entry that is on: not flagged enabled:false or present:false.
+const isOn = (e) => isObj(e) && e.enabled !== false && e.present !== false;
+
+// The effect keys that are present and enabled. Photoshop (28.0) returns
+// every effect key with enabled:false on the unused ones; a *Multi list
+// counts when at least one entry is on.
+function activeEffectKeys(le) {
+  return effectKeys(le).filter((k) => (Array.isArray(le[k]) ? le[k].some(isOn) : isOn(le[k])));
+}
+
 // existing layerEffects (or null) with `key` replaced by effect (removed when
 // effect is null); every other effect and the scale are kept. The `<key>Multi`
 // list (several shadows, PS 2021+) is dropped with it, so one shadow remains.
@@ -143,6 +153,6 @@ function flatShadow(full, scale) {
 const blendValue = (blend) => BLEND_MODES[blend] || blend;
 
 module.exports = {
-  effectKeys, hasEffects, mergeEffects, effectsScale,
+  effectKeys, hasEffects, activeEffectKeys, mergeEffects, effectsScale,
   BLEND_MODES, SHADOW_DEFAULTS, validateShadowParams, shadowParams, shadowFromDescriptor, flatShadow, blendValue,
 };

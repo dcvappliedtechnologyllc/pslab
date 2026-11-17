@@ -34,6 +34,28 @@ test("effectKeys / hasEffects ignore the scale and switches", () => {
   assert.equal(E.hasEffects({ dropShadowMulti: [{}] }), true);
 });
 
+test("activeEffectKeys lists only present and enabled effects (live descriptor shape)", () => {
+  // Photoshop 28.0 returns every effect key; unused ones are enabled:false
+  const off = (o) => ({ _obj: o, enabled: false, present: false });
+  const le = {
+    _obj: "layerEffects",
+    scale: pct(100),
+    masterFXSwitch: true,
+    dropShadow: { _obj: "dropShadow", enabled: true, present: true },
+    dropShadowMulti: [{ _obj: "dropShadow", enabled: true, present: true }],
+    innerShadowMulti: [off("innerShadow")],
+    solidFillMulti: [off("solidFill"), off("solidFill")],
+    gradientFillMulti: [off("gradientFill")],
+    frameFXMulti: [off("frameFX")],
+    outerGlow: off("outerGlow"),
+    bevelEmboss: { _obj: "bevelEmboss", enabled: false, present: true },
+  };
+  assert.deepEqual(E.activeEffectKeys(le), ["dropShadow", "dropShadowMulti"]);
+  assert.deepEqual(E.activeEffectKeys({ frameFXMulti: [off("frameFX"), { _obj: "frameFX", enabled: true, present: true }] }), ["frameFXMulti"]);
+  assert.deepEqual(E.activeEffectKeys({ frameFX: { _obj: "frameFX" } }), ["frameFX"], "no flags: counted");
+  assert.deepEqual(E.activeEffectKeys(null), []);
+});
+
 test("effectsScale is 100 * ppi / 72", () => {
   assert.ok(Math.abs(E.effectsScale(350) - 486.1111111111111) < 1e-9);
   assert.equal(E.effectsScale(72), 100);
