@@ -160,12 +160,15 @@ function moveTargets(d, ids) {
 }
 
 // DOM translate; fallback: a pure-offset Free Transform (live-verified in clone_from).
+// Both act on the whole layer selection (live, Photoshop 28.0), so the layer
+// is made the only selected one first; nothing is restored afterwards.
 async function translateLayer(ps, layer, dx, dy) {
   if (dx === 0 && dy === 0) return;
+  await bp(ps, [D.selectLayerById(layer.id)]);
   try {
     await layer.translate(dx, dy);
   } catch {
-    await bp(ps, [D.selectLayerById(layer.id), D.transform({ scalePct: 100, dx, dy })]);
+    await bp(ps, [D.transform({ scalePct: 100, dx, dy })]);
   }
 }
 

@@ -54,6 +54,8 @@ function makeStub() {
           for (const k of l.layers || []) shift(k);
         };
         shift(layer);
+        // Live: the DOM translate moves the whole layer selection, not only this layer.
+        for (const other of doc.activeLayers) if (other !== layer) shift(other);
       },
     };
     return layer;
@@ -287,6 +289,26 @@ test("move_layer keeps a listed child when its listed group has no bounds (the g
   assert.deepEqual(r.skipped, [{ id: 6, name: "Group" }]);
   assert.deepEqual(ps.calls.filter((c) => c[0] === "translate"), [["translate", 7, 5, 0]]);
   assert.deepEqual(r.moved.map((m) => m.id), [7]);
+});
+
+test("move_layer moves only the listed layer when another layer is also selected", async () => {
+  const ps = makeStub();
+  ps.doc.activeLayers = [ps.byId(4), ps.byId(5)];
+  const before = { ...boundsOf(ps, 5) };
+  await layers.move_layer(ps, { doc: 1, layers: [4], dy: 50 });
+  assert.equal(boundsOf(ps, 4).top, 270);
+  assert.deepEqual(boundsOf(ps, 5), before);
+  assert.deepEqual(ps.doc.activeLayers.map((l) => l.id), [4]);
+});
+
+test("align_layers moves only the listed layers when another layer is also selected", async () => {
+  const ps = makeStub();
+  ps.doc.activeLayers = [ps.byId(3), ps.byId(4), ps.byId(5)];
+  const before = { ...boundsOf(ps, 5) };
+  await layers.align_layers(ps, { doc: 1, layers: [3, 4], horizontal: "left" });
+  assert.equal(boundsOf(ps, 3).left, 0);
+  assert.equal(boundsOf(ps, 4).left, 0);
+  assert.deepEqual(boundsOf(ps, 5), before);
 });
 
 test("move_layer falls back to a transform offset when the DOM translate fails", async () => {
