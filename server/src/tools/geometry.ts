@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PluginBridge } from "../bridge.js";
-import { toolError, toolResult } from "./common.js";
+import { toolError, toolResult, hints } from "./common.js";
 
 const box = z.object({ left: z.number(), top: z.number(), right: z.number(), bottom: z.number() });
 const point = z.object({ x: z.number(), y: z.number() });
@@ -18,6 +18,7 @@ export function registerGeometryTools(server: McpServer, bridge: PluginBridge): 
   server.registerTool(
     "straighten",
     {
+      annotations: hints.add,
       description:
         "Straighten a tilted photo without touching the original: the Background is never changed. A copy of it " +
         '(or of the bottom layer when there is no Background) named "Straightened" is converted to a smart object ' +
@@ -59,6 +60,7 @@ export function registerGeometryTools(server: McpServer, bridge: PluginBridge): 
   server.registerTool(
     "content_aware_fill",
     {
+      annotations: hints.add,
       description:
         "Remove an object or blemish with Photoshop's Content-Aware Fill, non-destructively: the visible image is " +
         "stamped onto a NEW pixel layer named name on top of the stack, the region (exactly one of bbox or polygon, " +
@@ -84,6 +86,7 @@ export function registerGeometryTools(server: McpServer, bridge: PluginBridge): 
   server.registerTool(
     "clone_from",
     {
+      annotations: hints.add,
       description:
         "Cover something with a copy of another part of the image (like the Clone Stamp, as one rectangle): the " +
         "visible image inside src_bbox is copied to a NEW pixel layer named name and moved so its top-left corner " +

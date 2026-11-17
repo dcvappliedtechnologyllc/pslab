@@ -3,7 +3,7 @@ import path from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PluginBridge } from "../bridge.js";
-import { toolError, toolResult } from "./common.js";
+import { toolError, toolResult, hints } from "./common.js";
 
 const UNSAFE = ["/", "\\", ".."];
 
@@ -69,6 +69,7 @@ export function registerOutputTools(server: McpServer, bridge: PluginBridge): vo
   server.registerTool(
     "crop",
     {
+      annotations: hints.destroy,
       description:
         "Crop the document itself (destructive: pixels outside the box are discarded; undo is the only way back). " +
         "Requires confirm: true. Give exactly one of ratio (e.g. \"4:5\", the Instagram portrait crop: " +
@@ -98,6 +99,7 @@ export function registerOutputTools(server: McpServer, bridge: PluginBridge): vo
   server.registerTool(
     "export",
     {
+      annotations: hints.write,
       description:
         "Write an sRGB JPEG of the document to disk, overwriting any file with the same name. " +
         "Requires confirm: true. The document itself is untouched (a temporary copy is merged, converted, resized and closed). " +
@@ -145,6 +147,7 @@ export function registerOutputTools(server: McpServer, bridge: PluginBridge): vo
   server.registerTool(
     "save",
     {
+      annotations: hints.write,
       description:
         "Save the document (overwrites its file on disk; not undoable). Requires confirm: true. " +
         "Without path it saves in place (doc.save). With path (absolute, ending in .psd or .jpg to match format) " +
@@ -171,6 +174,7 @@ export function registerOutputTools(server: McpServer, bridge: PluginBridge): vo
   server.registerTool(
     "save_psd",
     {
+      annotations: hints.write,
       description:
         "Write a layered PSD copy of the document next to the exports. Requires confirm: true. " +
         "Never overwrites anything: the file is named after the document (IMG_0118.JPG -> IMG_0118.psd), " +

@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PluginBridge } from "../bridge.js";
-import { toolError, toolResult } from "./common.js";
+import { toolError, toolResult, hints } from "./common.js";
 
 const box = z.object({ left: z.number(), top: z.number(), right: z.number(), bottom: z.number() });
 
@@ -19,6 +19,7 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
   server.registerTool(
     "select_object",
     {
+      annotations: hints.add,
       description:
         "Select an object with Photoshop's Object Selection inside bbox (mode object; bbox in image pixels of that document), " +
         "or the main subject of the whole image with Select Subject (mode subject; bbox is ignored). " +
@@ -38,6 +39,7 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
   server.registerTool(
     "copy_to",
     {
+      annotations: hints.add,
       description:
         "Copy a layer from src_doc into dst_doc as a new pixel layer and return its layer_id and bounds. " +
         "With use_selection (default true) only the part inside src_doc's active selection is copied (run select_object first). " +
@@ -68,6 +70,7 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
   server.registerTool(
     "refine_edge",
     {
+      annotations: hints.add,
       description:
         "Clean the edge of a pasted layer: builds a layer mask from the layer's own transparency, shrunk by contract_px " +
         "and softened by feather_px (contract first, then feather; 0 skips either), replacing any mask the layer already has. " +
@@ -88,6 +91,7 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
   server.registerTool(
     "match_tone",
     {
+      annotations: hints.add,
       description:
         "Match a layer's brightness and saturation to a reference region of the composite image (reference_bbox, " +
         "image pixels; pick an area near where the layer sits, lit the same way). Measures the layer's own opaque pixels " +
@@ -106,6 +110,7 @@ export function registerCompositeTools(server: McpServer, bridge: PluginBridge):
   server.registerTool(
     "blur_layer",
     {
+      annotations: hints.add,
       description:
         "Soften a layer to match the shot's sharpness with a Gaussian blur of radius_px. The layer is converted to a " +
         "smart object first, so the blur is an editable smart filter (an existing smart object is not wrapped again). " +

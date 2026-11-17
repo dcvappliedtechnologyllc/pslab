@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PluginBridge } from "../bridge.js";
-import { toolError, toolResult } from "./common.js";
+import { toolError, toolResult, hints } from "./common.js";
 
 const box = z.object({ left: z.number(), top: z.number(), right: z.number(), bottom: z.number() });
 const point = z.object({ x: z.number(), y: z.number() });
@@ -111,6 +111,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "add_adjustment",
     {
+      annotations: hints.add,
       description:
         "Add an adjustment layer (one undoable history step) and return its layer_id. " +
         "Types and their params (all optional, default 0): " +
@@ -147,6 +148,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "set_adjustment",
     {
+      annotations: hints.set,
       description:
         "Change the values of an existing adjustment layer in place (one undoable history step), instead of stacking a new one. " +
         "type must match the layer (light, curves, hue_sat, exposure, brightness_contrast, color_vibrance, clarity_dehaze, levels); " +
@@ -171,6 +173,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "white_balance",
     {
+      annotations: hints.add,
       description:
         "Neutralise a colour cast from a patch that should be neutral. bbox is a box in image pixels around a grey or white " +
         "surface in the photo (a white wall, marble, a grey card), not a light source or a coloured object. RGB documents only. " +
@@ -202,6 +205,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "add_pixel_layer",
     {
+      annotations: hints.add,
       description: "Add an empty pixel layer with the given name (one undoable history step) and return its layer_id.",
       inputSchema: {
         doc: z.number().int().optional().describe("Document id; defaults to the active document"),
@@ -214,6 +218,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "mask_from_polygon",
     {
+      annotations: hints.add,
       description:
         "Replace a layer's mask with a polygon: white inside, black outside (inverted when invert is true), " +
         "edge softened by feather_px. Points are image pixels of that document (doc, default the active one). " +
@@ -232,6 +237,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "mask_from_subject",
     {
+      annotations: hints.add,
       description:
         "Add a layer mask from Photoshop's Object Selection limited to bbox, in image pixels of that document (mode object), " +
         "or Select Subject on the whole image (mode subject; bbox is ignored). doc defaults to the active document. " +
@@ -250,6 +256,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "paint_mask",
     {
+      annotations: hints.add,
       description:
         "Paint brush strokes onto a layer's mask in white (reveal) or black (hide). Strokes composite onto the existing mask; " +
         "a layer without a mask starts from a white mask. Stroke points and size_px are image pixels of that document " +
@@ -268,6 +275,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "delete_layer",
     {
+      annotations: hints.destroy,
       description:
         "Delete one layer (adjustment, pixel, group with its contents, smart object) from doc (default the active document). " +
         "Requires confirm: true, or the tool refuses and does nothing. The Background layer is never deleted (PROTECTED_LAYER). " +
@@ -288,6 +296,7 @@ export function registerEditTools(server: McpServer, bridge: PluginBridge): void
   server.registerTool(
     "set_layer",
     {
+      annotations: hints.set,
       description:
         "Change a layer's opacity (0..100), blend mode (e.g. normal, multiply, screen, overlay, soft_light, luminosity), " +
         "visibility or name, and/or invert its mask (mask_invert: true), in doc (default the active document). " +

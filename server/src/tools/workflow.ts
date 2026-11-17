@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { PluginBridge } from "../bridge.js";
-import { toolError, toolResult } from "./common.js";
+import { toolError, toolResult, hints } from "./common.js";
 
 // An image tool answers with the JPEG as an image block and everything else
 // (plus the document summary) as JSON text, like render_preview.
@@ -38,6 +38,7 @@ export function registerWorkflowTools(server: McpServer, bridge: PluginBridge): 
   server.registerTool(
     "copy_layers_to",
     {
+      annotations: hints.add,
       description:
         "Copy an adjustment stack (adjustment or pixel layers, with their masks) from src_doc onto the top of dst_doc, " +
         "keeping the source stack order, so a look built on one shot carries to the next. layers are layer ids in src_doc " +
@@ -56,6 +57,7 @@ export function registerWorkflowTools(server: McpServer, bridge: PluginBridge): 
   server.registerTool(
     "open_folder",
     {
+      annotations: hints.open,
       description:
         "Open every image in a folder (absolute path) as documents, in file-name order (numbers sort naturally: " +
         "IMG_2 before IMG_10). pattern is an optional case-insensitive file-name glob with * and ? (e.g. \"IMG_*.HEIC\"); " +
@@ -83,6 +85,7 @@ export function registerWorkflowTools(server: McpServer, bridge: PluginBridge): 
   server.registerTool(
     "compare_preview",
     {
+      annotations: hints.read,
       description:
         "One side-by-side JPEG to judge an edit: LEFT is \"before\" (the document with the layers in layer_ids_off hidden), " +
         "RIGHT is \"after\" (the document as it is now), with a grey 8 px gap. max_px is the width of the whole image, so each " +
@@ -100,6 +103,7 @@ export function registerWorkflowTools(server: McpServer, bridge: PluginBridge): 
   server.registerTool(
     "contact_sheet",
     {
+      annotations: hints.read,
       description:
         "One JPEG tiling the current composites of several open documents (1 to 24), left to right, top to bottom in the " +
         "order of docs, each centered in a square cell on mid-grey with 8 px gaps, to compare a set of shots at a glance. " +

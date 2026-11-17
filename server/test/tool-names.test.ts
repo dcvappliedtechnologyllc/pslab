@@ -36,6 +36,16 @@ describe("tool names", () => {
       const mcp = tools.map((t) => t.name).sort();
       expect(mcp).toEqual(Object.keys(pluginActions).sort());
       for (const name of mcp) expect(typeof pluginActions[name]).toBe("function");
+      // Every tool declares all four MCP hints as booleans so hosts can warn before destructive calls.
+      for (const t of tools) {
+        const a = (t.annotations ?? {}) as Record<string, unknown>;
+        for (const h of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"]) {
+          expect(typeof a[h], `${t.name}.${h}`).toBe("boolean");
+        }
+        if (a.readOnlyHint) expect(a.destructiveHint, `${t.name} read-only but destructive`).toBe(false);
+      }
+      const destructive = tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name).sort();
+      expect(destructive).toEqual(["crop", "delete_layer", "export", "save", "save_psd"]);
     } finally {
       await client.close();
     }
